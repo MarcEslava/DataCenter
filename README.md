@@ -1,3 +1,4 @@
-Escribe aquí en formato markdown documentación del proyecto util para entender su estructura y facilitar el deploy ...
+.env
+secrets/
 
 
