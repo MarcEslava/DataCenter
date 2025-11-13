@@ -1,0 +1,297 @@
+// Cargo.toml (relevant parts)
+// [dependencies]
+// axum = "0.7"
+// tokio = { version = "1", features = ["full"] }
+// uuid = { version = "1", features = ["v4", "serde"] }
+// serde = { version = "1", features = ["derive"] }
+// serde_json = "1"
+// sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "json"] }
+// reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+// tracing = "0.1"
+// tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+// tower = "0.5"
+// governor = "0.6"
+// thiserror = "1"
+
+use axum::{
+    extract::{Path, State},
+    routing::{get, post},
+    Json, Router,
+};
+use serde::{Deserialize, Serialize};
+use sqlx::{PgPool, Postgres, Transaction};
+use tokio::time::{sleep, Duration};
+use tracing::{info, error};
+use uuid::Uuid;
+
+#[derive(Clone)]
+struct AppState {
+    db: PgPool,
+    // per-pharmacy rate limiter maps, config, http client, etc.
+    http: reqwest::Client,
+}
+
+#[derive(Deserialize)]
+struct CreateJob {
+    query_type: String,
+    params: serde_json::Value,
+    pharmacies: Option<Vec<String>>, // if None, select all
+    idempotency_key: Option<String>,
+    airflow_run_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct JobResponse {
+    job_id: Uuid,
+    status: String,
+    total: i32,
+    completed: i32,
+    failed: i32,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter("info,tower_http=info,sqlx=warn")
+        .init();
+
+    let db = PgPool::connect(&std::env::var("DATABASE_URL")?).await?;
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()?;
+
+    let state = AppState { db, http };
+
+    // Spawn worker(s)
+    for _ in 0..num_cpus::get().max(2) {
+        let st = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = worker_loop(st).await {
+                error!(?e, "worker loop crashed");
+            }
+        });
+    }
+
+    let app = Router::new()
+        .route("/health", get(|| async { "ok" }))
+        .route("/jobs", post(create_job))
+        .route("/jobs/:id", get(get_job))
+        .with_state(state);
+
+    info!("listening on 0.0.0.0:8080");
+    axum::Server::bind(&"0.0.0.0:8080".parse()?)
+        .serve(app.into_make_service())
+        .await?;
+
+    Ok(())
+}
+
+async fn create_job(
+    State(st): State<AppState>,
+    Json(req): Json<CreateJob>,
+) -> Result<Json<JobResponse>, (axum::http::StatusCode, String)> {
+    // idempotency: return existing job if key already used
+    if let Some(key) = &req.idempotency_key {
+        if let Some(existing) = sqlx::query!(
+            r#"select id, status, total, completed, failed from jobs where idempotency_key = $1"#,
+            key
+        )
+        .fetch_optional(&st.db)
+        .await
+        .map_err(internal)?
+        {
+            return Ok(Json(JobResponse {
+                job_id: existing.id,
+                status: existing.status,
+                total: existing.total,
+                completed: existing.completed,
+                failed: existing.failed,
+            }));
+        }
+    }
+
+    let mut tx = st.db.begin().await.map_err(internal)?;
+    let job_id = Uuid::new_v4();
+
+    // pick pharmacies: provided or all (demo uses provided)
+    let pharmacies = req.pharmacies.unwrap_or_default();
+    let total = pharmacies.len() as i32;
+
+    sqlx::query!(
+        r#"
+        insert into jobs (id, query_type, params, pharmacy_selector, status, total, idempotency_key, airflow_run_id)
+        values ($1, $2, $3, $4, 'RUNNING', $5, $6, $7)
+        "#,
+        job_id,
+        req.query_type,
+        req.params,
+        serde_json::json!({"pharmacies": pharmacies}),
+        total,
+        req.idempotency_key,
+        req.airflow_run_id
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    for ph in pharmacies {
+        sqlx::query!(
+            r#"
+            insert into tasks (id, job_id, pharmacy_id, status, next_attempt_at)
+            values ($1, $2, $3, 'PENDING', now())
+            "#,
+            Uuid::new_v4(),
+            job_id,
+            ph
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(internal)?;
+    }
+
+    tx.commit().await.map_err(internal)?;
+
+    Ok(Json(JobResponse {
+        job_id,
+        status: "RUNNING".into(),
+        total,
+        completed: 0,
+        failed: 0,
+    }))
+}
+
+async fn get_job(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<JobResponse>, (axum::http::StatusCode, String)> {
+    let rec = sqlx::query!(
+        r#"select id, status, total, completed, failed from jobs where id = $1"#,
+        id
+    )
+    .fetch_optional(&st.db)
+    .await
+    .map_err(internal)?;
+
+    match rec {
+        Some(j) => Ok(Json(JobResponse {
+            job_id: j.id,
+            status: j.status,
+            total: j.total,
+            completed: j.completed,
+            failed: j.failed,
+        })),
+        None => Err((axum::http::StatusCode::NOT_FOUND, "job not found".into())),
+    }
+}
+
+async fn worker_loop(st: AppState) -> anyhow::Result<()> {
+    loop {
+        // claim a task
+        let mut tx: Transaction<Postgres> = st.db.begin().await?;
+        let task = sqlx::query!(
+            r#"
+            select id, job_id, pharmacy_id, attempt
+            from tasks
+            where status in ('PENDING','DISPATCHED','FAILED')
+              and next_attempt_at <= now()
+            for update skip locked
+            limit 1
+            "#
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some(t) = task {
+            // mark IN_PROGRESS
+            sqlx::query!(
+                r#"update tasks set status='IN_PROGRESS', started_at = coalesce(started_at, now()) where id = $1"#,
+                t.id
+            )
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+
+            // do the work
+            let res = call_pharmacy(&st.http, &t.pharmacy_id).await;
+
+            let mut tx = st.db.begin().await?;
+            match res {
+                Ok(meta) => {
+                    sqlx::query!(
+                        r#"update tasks set status='SUCCEEDED', finished_at = now(), result_metadata=$2 where id=$1"#,
+                        t.id, meta
+                    )
+                    .execute(&mut *tx)
+                    .await?;
+                    sqlx::query!(
+                        r#"update jobs set completed = completed + 1 where id = $1"#,
+                        t.job_id
+                    )
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                Err(e) => {
+                    let attempt = t.attempt + 1;
+                    let (status, next_at) = if attempt >= 5 {
+                        ("FAILED", None)
+                    } else {
+                        // exponential backoff with jitter
+                        let delay_secs = (2u64.pow(attempt.min(6)) + fastrand::u64(0..5)).min(300);
+                        ("DISPATCHED", Some(chrono::Utc::now() + chrono::Duration::seconds(delay_secs as i64)))
+                    };
+                    sqlx::query!(
+                        r#"update tasks set status=$2, attempt=$3, next_attempt_at=coalesce($4, next_attempt_at), last_error=$5 where id=$1"#,
+                        t.id, status, attempt, next_at, e.to_string()
+                    )
+                    .execute(&mut *tx)
+                    .await?;
+
+                    if status == "FAILED" {
+                        sqlx::query!(r#"update jobs set failed = failed + 1 where id=$1"#, t.job_id)
+                            .execute(&mut *tx)
+                            .await?;
+                    }
+                }
+            }
+
+            // finalize job if done
+            sqlx::query!(
+                r#"
+                update jobs
+                set status = case when completed + failed = total then
+                    case when failed = 0 then 'SUCCEEDED' else 'FAILED' end
+                else status end
+                where id = $1
+                "#,
+                t.job_id
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+        } else {
+            // nothing to do: short sleep
+            sleep(Duration::from_millis(300)).await;
+            tx.commit().await?;
+        }
+    }
+}
+
+async fn call_pharmacy(client: &reqwest::Client, pharmacy_id: &str) -> anyhow::Result<serde_json::Value> {
+    // Map pharmacy_id -> endpoint/credentials (from config/DB)
+    let endpoint = format!("https://agent.{pharmacy_id}.example.com/query");
+    // Example request; add auth headers, mTLS if needed
+    let resp = client
+        .post(endpoint)
+        .json(&serde_json::json!({"action":"RUN_QUERY"}))
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<serde_json::Value>()
+        .await?;
+    Ok(resp)
+}
+
+fn internal<E: std::fmt::Display>(e: E) -> (axum::http::StatusCode, String) {
+    (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+}
