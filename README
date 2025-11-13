@@ -1,0 +1,35 @@
+Secrets:
+secrets/
+  airflow_fernet_key
+  airflow_webserver_secret
+  airflow_api_jwt_secret
+  postgres_password
+  mongo_root_password
+
+
+# ADD ON PROD:
+# secrets:
+#   airflow_fernet_key:
+#     file: ./secrets/airflow_fernet_key
+#   airflow_webserver_secret:
+#     file: ./secrets/airflow_webserver_secret
+#   airflow_api_jwt_secret:
+#     file: ./secrets/airflow_api_jwt_secret
+#   postgres_password:
+#     file: ./secrets/postgres_password
+#   mongo_root_password:
+#     file: ./secrets/mongo_root_password
+
+Airflow real user:
+
+# docker exec -it piserver airflow users create \
+#   --username admin --firstname Marc --lastname Eslava \
+#   --role Admin --email meslava@ecoceutics.com --password 'generate_random_pasword'
+
+
+# docker exec -it apiserver airflow users create \
+#   --username admin \
+#   --firstname Admin --lastname User \
+#   --role Admin \
+#   --email admin@yourco.com \
+#   --password 'S3cureP@ss!'
