@@ -30,20 +30,19 @@ Prerequisites:
 - Git
 - A shell (bash, PowerShell) or a container runtime (Docker)
 
-Clone and run locally:
+## Clone and run locally:
 
-files:
 # secrets:
 #   airflow_fernet_key:
-#     file: ./secrets/airflow_fernet_key
+    file: ./secrets/airflow_fernet_key
 #   airflow_webserver_secret:
-#     file: ./secrets/airflow_webserver_secret
+     file: ./secrets/airflow_webserver_secret
 #   airflow_api_jwt_secret:
-#     file: ./secrets/airflow_api_jwt_secret
+     file: ./secrets/airflow_api_jwt_secret
 #   postgres_password:
-#     file: ./secrets/postgres_password
+     file: ./secrets/postgres_password
 #   mongo_root_password:
-#     file: ./secrets/mongo_root_password
+     file: ./secrets/mongo_root_password
 
 Bash / WSL:
 
