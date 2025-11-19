@@ -1,0 +1,13 @@
+# Airflow
+AIRFLOW_DB_URL=postgresql+psycopg2://airflow:changeme_pg@postgres:5432/airflow
+AIRFLOW_FERNET_KEY=U3J7mS3eF4e8bH1p6rWbQW1S7s3c8w0O0kN3z9o1p_Q=   # sample
+AIRFLOW_WEBSERVER_SECRET=2f4f9c8b7a6e5d4c3b2a1908f7e6d5c4b3a291807060504030201ffeeddccb
+AIRFLOW_API_JWT_SECRET=0f1e2d3c4b5a69788796a5b4c3d2e1f0ffeeddccbbaa99887766554433221100
+
+# Postgres
+POSTGRES_USER=airflow
+POSTGRES_PASSWORD=changeme_pg
+POSTGRES_DB=airflow
+
+
+

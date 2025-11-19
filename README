@@ -1,35 +1,23 @@
-Secrets:
-secrets/
-  airflow_fernet_key
-  airflow_webserver_secret
-  airflow_api_jwt_secret
-  postgres_password
-  mongo_root_password
+# Pipeline
 
+This repository contains a cross-platform, extensible pipeline for building, testing and deploying projects. It is intentionally small and easily integrated into existing repositories or CI providers.
 
-# ADD ON PROD:
-# secrets:
-#   airflow_fernet_key:
-#     file: ./secrets/airflow_fernet_key
-#   airflow_webserver_secret:
-#     file: ./secrets/airflow_webserver_secret
-#   airflow_api_jwt_secret:
-#     file: ./secrets/airflow_api_jwt_secret
-#   postgres_password:
-#     file: ./secrets/postgres_password
-#   mongo_root_password:
-#     file: ./secrets/mongo_root_password
+## Contents
+- scripts/        - portable scripts to run pipeline stages (build/test/package/deploy)
+- pipeline/       - pipeline stage implementations and helpers
+- config/         - default configuration and environment templates
+- tests/          - test harness and test suites
 
-Airflow real user:
+## Goals
+- Provide a minimal, repeatable pipeline that runs locally or in CI
+- Keep stage logic platform-agnostic (works on POSIX and Windows)
+- Make it easy to extend and hook into CI providers (GitHub Actions, Azure Pipelines, GitLab CI, etc.)
 
-# docker exec -it piserver airflow users create \
-#   --username admin --firstname Marc --lastname Eslava \
-#   --role Admin --email meslava@ecoceutics.com --password 'generate_random_pasword'
+## Quick start
+Prerequisites:
+- Git
+- A shell (bash, PowerShell) or a container runtime (Docker)
 
+Clone and run locally:
 
-# docker exec -it apiserver airflow users create \
-#   --username admin \
-#   --firstname Admin --lastname User \
-#   --role Admin \
-#   --email admin@yourco.com \
-#   --password 'S3cureP@ss!'
+Bash / WSL:
