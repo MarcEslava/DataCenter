@@ -1,3 +1,15 @@
+ /$$$$$$$   /$$$$$$  /$$$$$$$$ /$$$$$$         /$$$$$$  /$$$$$$$$ /$$   /$$ /$$$$$$$$ /$$$$$$$$ /$$$$$$$ 
+| $$__  $$ /$$__  $$|__  $$__//$$__  $$       /$$__  $$| $$_____/| $$$ | $$|__  $$__/| $$_____/| $$__  $$
+| $$  \ $$| $$  \ $$   | $$  | $$  \ $$      | $$  \__/| $$      | $$$$| $$   | $$   | $$      | $$  \ $$
+| $$  | $$| $$$$$$$$   | $$  | $$$$$$$$      | $$      | $$$$$   | $$ $$ $$   | $$   | $$$$$   | $$$$$$$/
+| $$  | $$| $$__  $$   | $$  | $$__  $$      | $$      | $$__/   | $$  $$$$   | $$   | $$__/   | $$__  $$
+| $$  | $$| $$  | $$   | $$  | $$  | $$      | $$    $$| $$      | $$\  $$$   | $$   | $$      | $$  \ $$
+| $$$$$$$/| $$  | $$   | $$  | $$  | $$      |  $$$$$$/| $$$$$$$$| $$ \  $$   | $$   | $$$$$$$$| $$  | $$
+|_______/ |__/  |__/   |__/  |__/  |__/       \______/ |________/|__/  \__/   |__/   |________/|__/  |__/
+                                                                                                         
+                                                                                                         
+                                                                                                         
+
 # Pipeline
 
 This repository contains a cross-platform, extensible pipeline for building, testing and deploying projects. It is intentionally small and easily integrated into existing repositories or CI providers.
@@ -20,4 +32,62 @@ Prerequisites:
 
 Clone and run locally:
 
+files:
+# secrets:
+#   airflow_fernet_key:
+#     file: ./secrets/airflow_fernet_key
+#   airflow_webserver_secret:
+#     file: ./secrets/airflow_webserver_secret
+#   airflow_api_jwt_secret:
+#     file: ./secrets/airflow_api_jwt_secret
+#   postgres_password:
+#     file: ./secrets/postgres_password
+#   mongo_root_password:
+#     file: ./secrets/mongo_root_password
+
 Bash / WSL:
+
+docker compose pull
+
+docker compose up -d
+
+docker exec -it apiserver airflow users create \
+   --username admin \
+   --firstname Admin --lastname User \
+   --role Admin \
+   --email admin@yourco.com \
+   --password 'S3cureP@ss!'
+
+# # inside the broker container
+kafka-configs --bootstrap-server broker:29092 \
+   --alter --add-config 'SCRAM-SHA-512=[password=SuperSecret!]' \
+   --entity-type users --entity-name app1
+
+## CREAR LAS KEYS 
+# 1) Ejecuta keytool desde un contenedor (JDK 17)
+docker run --rm -v "${PWD}:/work" -w /work eclipse-temurin:17-jdk-jammy `
+  keytool -genkeypair -alias kafka-broker `
+  -keystore server.keystore.jks -storepass changeme_keystore `
+  -keypass changeme_key -keyalg RSA -keysize 4096 -validity 3650 `
+  -dname "CN=kafka.ecoceutics.com, OU=Dev, O=Ecoceutics, L=Barcelona, ST=Barcelona, C=ES" `
+  -ext "SAN=dns:kafka.ecoceutics.com"
+#  2) Exporta el certificado público (PEM)
+docker run --rm -v "${PWD}:/work" -w /work eclipse-temurin:17-jdk-jammy `
+  keytool -exportcert -alias kafka-broker `
+  -keystore server.keystore.jks -storepass changeme_keystore `
+  -rfc -file server.crt
+# 3) Crea el truststore e importa el cert
+docker run --rm -v "${PWD}:/work" -w /work eclipse-temurin:17-jdk-jammy `
+  keytool -importcert -alias kafka-broker `
+  -file server.crt -keystore server.truststore.jks `
+  -storepass changeme_truststore -noprompt
+# 4) Crea los archivos de contraseñas (una sola línea cada uno)
+Set-Content -NoNewline -Path keystore_creds      -Value 'changeme_keystore'
+Set-Content -NoNewline -Path key_creds           -Value 'changeme_key'
+Set-Content -NoNewline -Path truststore_creds    -Value 'changeme_truststore'
+
+## PORTS
+
+Airflow -> 8080
+Kafka -> 9021
+Spark -> 9090
