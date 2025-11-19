@@ -7,6 +7,14 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+
+    # Enable SASL/Digest
+      ZOOKEEPER_AUTH_PROVIDER_SASL: org.apache.zookeeper.server.auth.SASLAuthenticationProvider
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/zookeeper_jaas.conf"
+    # (optional but recommended)
+      ZOOKEEPER_ALLOW_SASL_ANONYMOUS: "false"
+    volumes:
+      - ./secrets/kafka:/etc/kafka
     healthcheck:
       test: ["CMD", "bash", "-c", "echo 'ruok' | nc localhost 2181"]
       interval: 10s
@@ -30,7 +38,6 @@ services:
       # KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092
       # KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,EXTERNAL://kafka.mycompany.com:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:SASL_SSL
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-512
@@ -49,11 +56,14 @@ services:
       CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: broker:29092
       CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: "1"   # single-broker cluster
       CONFLUENT_METRICS_REPORTER_TOPIC_CREATE: "true"  # auto-create _confluent-metrics
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,EXTERNAL://kafka.ecoceutics.com:9092
+      # tell the JVM where JAAS is:
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/jaas.conf -Dzookeeper.sasl.client=true -Dzookeeper.sasl.client.username=kafka"
     volumes:
-      - ./secrets/kafka:/etc/kafka/secrets:ro  
+      - ./secrets/kafka:/etc/kafka/secrets
     healthcheck:
       # Succeeds when broker answers the metadata call
-      test: ["CMD", "bash", "-lc", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      test: ["CMD", "bash", "-lc", "kafka-broker-api-versions --bootstrap-server localhost:29092 >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -73,6 +83,11 @@ services:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "curl -f http://localhost:8081/subjects || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks:
       - confluent
 
@@ -157,14 +172,16 @@ services:
       AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
       AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
       AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256
-      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
-      AIRFLOW__API__BASE_URL: https://airflow.ecoceutics.com
+
+      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session,airflow.api.auth.backend.jwt
+      AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
+
+
 
     volumes:
       - ./dags:/opt/airflow/dags
-      # - ./script/entrypoint.sh:/opt/airflow/script/entrypoint.sh
       - ./requirements.txt:/opt/airflow/requirements.txt
-      # - ./logs:/opt/airflow/logs -> if you want logs persisted
     ports:
       - "8080:8080"
     networks:
@@ -178,15 +195,19 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./requirements.txt:/opt/airflow/requirements.txt
-      # - ./logs:/opt/airflow/logs
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
       AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
-      AIRFLOW__CORE__LOAD_EXAMPLES: false
+
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://apiserver:8080/execution/
-      AIRFLOW__API_AUTH__JWT_SECRET: same_value_everywhere
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
       AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256
+      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session,airflow.api.auth.backend.jwt
 
 
     networks:
@@ -203,8 +224,12 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://apiserver:8080/execution/
-      AIRFLOW__API_AUTH__JWT_SECRET: same_value_everywhere
-      AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256  
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
+      AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256 
+      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session,airflow.api.auth.backend.jwt
 
     volumes:
       - ./dags:/opt/airflow/dags
@@ -233,35 +258,6 @@ services:
       SPARK_MASTER_URL: spark://spark-master:7077
     networks:
       - confluent
-
-  mongo:
-    image: mongo
-    container_name: mongo
-    restart: always
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
-    ports:
-      - "27017:27017"        
-    networks:
-      - confluent
-
-  mongo-express:
-    image: mongo-express
-    container_name: mongo-express
-    restart: always
-    depends_on:
-      mongo:
-        condition: service_healthy
-    ports:
-      - "8084:8081"          # host 8083 -> container 8081 (UI at http://localhost:8083)
-    environment:
-      ME_CONFIG_MONGODB_URL: mongodb://root:example@mongo:27017/?authSource=admin
-      ME_CONFIG_BASICAUTH_ENABLED: "true"
-      ME_CONFIG_BASICAUTH_USERNAME: ${MONGOEXPRESS_USER}
-      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGOEXPRESS_PASS}
-    networks:
-      - confluent
   
   python-master:
     build:
@@ -277,7 +273,10 @@ services:
       - ./data:/work/data        
       - ~/.ssh:/home/app/.ssh:ro 
     networks:
-      - confluent              
+      - confluent  
+
+
+
 
 networks:
   confluent:
