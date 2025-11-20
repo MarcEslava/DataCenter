@@ -7,11 +7,8 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-
-    # Enable SASL/Digest
       ZOOKEEPER_AUTH_PROVIDER_SASL: org.apache.zookeeper.server.auth.SASLAuthenticationProvider
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/zookeeper_jaas.conf"
-    # (optional but recommended)
       ZOOKEEPER_ALLOW_SASL_ANONYMOUS: "false"
     volumes:
       - ./secrets/kafka:/etc/kafka
@@ -35,8 +32,6 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      # KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092
-      # KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:SASL_SSL
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
@@ -112,7 +107,6 @@ services:
   connect:
     image: confluentinc/cp-kafka-connect:7.4.0
     hostname: connect
-    container_name: connect 
     depends_on:
       - broker
       - schema-registry
@@ -209,7 +203,6 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session,airflow.api.auth.backend.jwt
 
-
     networks:
       - confluent
 
@@ -263,7 +256,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: python-master
     hostname: python-master
     working_dir: /work
     tty: true
@@ -274,9 +266,6 @@ services:
       - ~/.ssh:/home/app/.ssh:ro 
     networks:
       - confluent  
-
-
-
 
 networks:
   confluent:
