@@ -166,12 +166,10 @@ services:
       AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
       AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
       AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256
-
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session,airflow.api.auth.backend.jwt
-      AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
-
-
+      AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "False"
+      AIRFLOW__WEBSERVER__BASE_URL: http://localhost:8080
 
     volumes:
       - ./dags:/opt/airflow/dags
@@ -202,6 +200,7 @@ services:
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session,airflow.api.auth.backend.jwt
+      AIRFLOW__WEBSERVER__BASE_URL: http://localhost:8080
 
     networks:
       - confluent
