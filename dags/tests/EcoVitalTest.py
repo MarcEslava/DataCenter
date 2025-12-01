@@ -285,3 +285,4 @@ mapping = {
 fact_df.rename(columns=mapping, inplace=True)
 fact_df['Precio'] = fact_df['Precio'].round(2)
 fact_df.to_excel("EcoVital_FactTable.xlsx", index=False, sheet_name="in")
+
