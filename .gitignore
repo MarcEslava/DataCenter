@@ -102,3 +102,4 @@ Thumbs.db
 
 .env
 secrets/
+dags/tests/
