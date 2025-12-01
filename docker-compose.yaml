@@ -139,7 +139,6 @@ services:
     networks: 
       - confluent
 
-
   postgres:
     image: postgres:14.0
     environment:
@@ -152,7 +151,7 @@ services:
   apiserver:
     image: apache/airflow:3.1.1-python3.12
     # apiserver
-    command: bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt && exec airflow api-server --apps core,execution"
+    command: bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt && exec airflow api-server --apps core,execution --proxy-headers"
     depends_on:
       - postgres
       - scheduler
@@ -169,11 +168,11 @@ services:
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session,airflow.api.auth.backend.jwt
       AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "False"
-      AIRFLOW__WEBSERVER__BASE_URL: http://localhost:8080
-
+      FORWARDED_ALLOW_IPS: ${FORWARDED_IP_AIRFLOW}
     volumes:
       - ./dags:/opt/airflow/dags
       - ./requirements.txt:/opt/airflow/requirements.txt
+      - ./airflow/airflow.cfg:/opt/airflow/airflow.cfg
     ports:
       - "8080:8080"
     networks:
@@ -181,7 +180,7 @@ services:
 
   scheduler:
     image: apache/airflow:3.1.1-python3.12
-    command: bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt && exec airflow scheduler"
+    command: bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt  && exec airflow scheduler"
     depends_on:
       - postgres
     volumes:
@@ -207,7 +206,7 @@ services:
 
   dag-processor:
     image: apache/airflow:3.1.1-python3.12
-    command: bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt && exec airflow dag-processor"
+    command: bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt"
     depends_on:
       - postgres
     environment:
