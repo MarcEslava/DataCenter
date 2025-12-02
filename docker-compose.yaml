@@ -170,6 +170,7 @@ services:
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session,airflow.api.auth.backend.jwt
       FORWARDED_ALLOW_IPS: "*"
       AIRFLOW__API__BASE_URL: ${AIRFLOW_API_BASE_URL}
+      
     volumes:
       - ./dags:/opt/airflow/dags
       - ./requirements.txt:/opt/airflow/requirements.txt
