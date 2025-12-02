@@ -115,3 +115,6 @@ Populate each file with the secret value (one line, no newline if required).
 - For platform-specific instructions (PowerShell vs. bash), prefer the appropriate command block above.
 
 </selection>
+
+
+docker compose run --rm apiserver airflow db migrate

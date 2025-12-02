@@ -11,6 +11,6 @@ POSTGRES_PASSWORD=changeme_pg
 POSTGRES_DB=airflow
 
 
-FORWARDED_IP_AIRFLOW = 172.18.0.0/16
+FORWARDED_IP_AIRFLOW = *   # 172.18.0.0/16
 
-
+AIRFLOW_API_BASE_URL = https://datahub.ecoceutics.com/airflow
