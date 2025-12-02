@@ -170,7 +170,6 @@ services:
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session,airflow.api.auth.backend.jwt
       FORWARDED_ALLOW_IPS: "*"
-      AIRFLOW__API__BASE_URL: ${AIRFLOW_API_BASE_URL}
     volumes:
       - ./dags:/opt/airflow/dags
       - ./requirements.txt:/opt/airflow/requirements.txt
@@ -202,7 +201,7 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
       AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
-      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://apiserver:8080/execution/
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://127.0.0.1:8080/execution/
       AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
       AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
@@ -211,14 +210,14 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session,airflow.api.auth.backend.jwt
       FORWARDED_ALLOW_IPS: "*"
-      AIRFLOW__API__BASE_URL: https://datahub.ecoceutics.com/airflow
+      AIRFLOW__API__BASE_URL: ${AIRFLOW_API_BASE_URL}
 
     networks:
       - confluent
 
   dag-processor:
     image: apache/airflow:3.1.3-python3.12
-    command: bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt"
+    command: bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt && exec airflow dag-processor"
     depends_on:
       - postgres
     environment:
@@ -226,7 +225,7 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
-      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://apiserver:8080/execution/
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://127.0.0.1:8080/execution/
       AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
       AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256 
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
@@ -234,7 +233,7 @@ services:
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session,airflow.api.auth.backend.jwt
       FORWARDED_ALLOW_IPS: "*"
-      AIRFLOW__API__BASE_URL: https://datahub.ecoceutics.com/airflow
+      AIRFLOW__API__BASE_URL: ${AIRFLOW_API_BASE_URL}
 
     volumes:
       - ./dags:/opt/airflow/dags
