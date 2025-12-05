@@ -15,5 +15,3 @@ FORWARDED_IP_AIRFLOW = *   # 172.18.0.0/16
 
 AIRFLOW_API_BASE_URL = https://datahub.ecoceutics.com/airflow/
 
-
-curl -i https://datahub.ecoceutics.com/airflow/api/v2/health
