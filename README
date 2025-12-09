@@ -137,7 +137,7 @@ docker compose run --rm apiserver airflow db migrate
 - ProxyPassReverse /3.0/            http://control-center:9021/3.0/
 
 2. Airflow:
- - Use root for airflow. Static don't work using httpd
+- Use root for airflow. Static don't work using httpd
 3. Spark:
 - ProxyPass        /spark/  http://spark-master:8080/
 - ProxyPassReverse /spark/  http://spark-master:8080/
