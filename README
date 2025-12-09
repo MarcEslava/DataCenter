@@ -114,8 +114,7 @@ Populate each file with the secret value (one line, no newline if required).
 - To integrate with CI providers, add pipeline hooks under `pipeline/` and call scripts from `scripts/`.
 - For platform-specific instructions (PowerShell vs. bash), prefer the appropriate command block above.
 
-</selection>
-
+## Command to tell airflow to mirgate db usage for postgres.
 
 docker compose run --rm apiserver airflow db migrate
 
@@ -138,4 +137,12 @@ ProxyPass        /3.0/            http://control-center:9021/3.0/
 ProxyPassReverse /3.0/            http://control-center:9021/3.0/
 
 2. Airflow
+Use root for airflow. Static don't work using httpd
+3. 
+ProxyPass        /spark/  http://spark-master:8080/
+ProxyPassReverse /spark/  http://spark-master:8080/
+
+
+
+</selection>
 
