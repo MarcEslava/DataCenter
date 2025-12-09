@@ -52,7 +52,6 @@ services:
       CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: "1"   # single-broker cluster
       CONFLUENT_METRICS_REPORTER_TOPIC_CREATE: "true"  # auto-create _confluent-metrics
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,EXTERNAL://kafka.ecoceutics.com:9092
-      # tell the JVM where JAAS is:
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/jaas.conf -Dzookeeper.sasl.client=true -Dzookeeper.sasl.client.username=kafka"
     volumes:
       - ./secrets/kafka:/etc/kafka/secrets
@@ -77,7 +76,7 @@ services:
     environment:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'
-      SCHEMA_REGISTRY_LISTENERS: http://localhost:8081
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
     healthcheck:
       test: ["CMD", "bash", "-lc", "curl -f http://localhost:8081/subjects || exit 1"]
       interval: 10s
@@ -110,24 +109,31 @@ services:
     depends_on:
       - broker
       - schema-registry
+    # (Optional) remove host port if you only access via Apache
     ports:
       - "8083:8083"
     environment:
-      CONNECT_BOOTSTRAP_SERVERS: 'broker:29092'
+      # --- REQUIRED basics ---
+      CONNECT_BOOTSTRAP_SERVERS: broker:29092
+      CONNECT_GROUP_ID: compose-connect-group     
+
       CONNECT_CONFIG_STORAGE_TOPIC: docker-connect-configs
-      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
       CONNECT_OFFSET_STORAGE_TOPIC: docker-connect-offsets
-      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
       CONNECT_STATUS_STORAGE_TOPIC: docker-connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
       CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+
       CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
-      CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
       CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
       CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+
+      CONNECT_LISTENERS: "http://0.0.0.0:8083"
+      CONNECT_REST_ADVERTISED_HOST_NAME: "connect"
+      CONNECT_REST_ADVERTISED_PORT: "8083"
+
+      # --- Plugins ---
       CONNECT_PLUGIN_PATH: "/usr/share/java,/etc/kafka-connect/jars"
-      CONNECT_LISTENERS: "http://localhost:8083"       
-      CONNECT_REST_ADVERTISED_HOST_NAME: "connect"  
-      CONNECT_REST_ADVERTISED_PORT: "8083"             
     volumes:
       - ./kafka-connect:/etc/kafka-connect/jars
     healthcheck:
@@ -135,7 +141,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    networks: 
+    networks:
       - confluent
 
   postgres:
@@ -151,7 +157,7 @@ services:
     image: apache/airflow:3.1.3
     # apiserver
     command: >
-      bash -lc "exec airflow api-server"
+      bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt  && exec airflow api-server"
     depends_on:
       - postgres
       - scheduler
@@ -184,9 +190,7 @@ services:
         - "8088:80"
         - "443:443"
       volumes:
-        - ./httpd/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
-      depends_on:
-        - apiserver
+        - ./httpd/httpd.conf:/usr/local/apache2/conf/httpd.conf
       networks:
         - confluent
 
@@ -202,12 +206,12 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
       AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
-      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://127.0.0.1:8080/execution/
-      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
-      AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256
-      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
-      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
+      # AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
+      # AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256
+      # AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      # AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      # AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
       FORWARDED_ALLOW_IPS: "*"
@@ -225,12 +229,12 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
-      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://127.0.0.1:8080/execution/
-      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
-      AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256 
-      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
-      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
+      # AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
+      # AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256 
+      # AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      # AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      # AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
       FORWARDED_ALLOW_IPS: "*"
       # AIRFLOW__API__BASE_URL: ${AIRFLOW_API_BASE_URL}
