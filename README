@@ -118,3 +118,24 @@ Populate each file with the secret value (one line, no newline if required).
 
 
 docker compose run --rm apiserver airflow db migrate
+
+## Reverse-Proxy
+
+1. Confluent/Kafka
+
+ProxyPass        /dist/           http://control-center:9021/dist/
+ProxyPassReverse /dist/           http://control-center:9021/dist/
+ProxyPass        /static/         http://control-center:9021/static/
+ProxyPassReverse /static/         http://control-center:9021/static/
+ProxyPass        /manifest.json   http://control-center:9021/manifest.json
+ProxyPassReverse /manifest.json   http://control-center:9021/manifest.json
+ProxyPass        /favicon.ico     http://control-center:9021/favicon.ico
+ProxyPassReverse /favicon.ico     http://control-center:9021/favicon.ico
+
+ProxyPass        /2.0/            http://control-center:9021/2.0/
+ProxyPassReverse /2.0/            http://control-center:9021/2.0/
+ProxyPass        /3.0/            http://control-center:9021/3.0/
+ProxyPassReverse /3.0/            http://control-center:9021/3.0/
+
+2. Airflow
+

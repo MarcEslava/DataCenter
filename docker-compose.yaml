@@ -101,11 +101,11 @@ services:
       CONTROL_CENTER_REPLICATION_FACTOR: 1
       CONTROL_CENTER_CONNECT_CONNECT-DEFAULT_CLUSTER: 'connect:8083'
       CONTROL_CENTER_CONNECT_CONNECT_CLUSTER: "http://connect:8083"
+      CONTROL_CENTER_CONNECT_connect-default_CLUSTER: "http://connect:8083"
     networks:
       - confluent
   connect:
     image: confluentinc/cp-kafka-connect:7.4.0
-    hostname: connect
     depends_on:
       - broker
       - schema-registry
@@ -248,6 +248,13 @@ services:
   spark-master:
       image: apache/spark:4.0.1-scala2.13-java21-python3-r-ubuntu
       command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+      environment:
+        SPARK_MODE: master
+        SPARK_MASTER_HOST: spark-master
+        SPARK_MASTER_PORT: 7077
+        SPARK_MASTER_WEBUI_PORT: 8080
+        SPARK_MASTER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
+        SPARK_PUBLIC_DNS: datahub.local
       ports:
         - "9090:8080"
         - "7077:7077"
@@ -259,10 +266,13 @@ services:
     depends_on:
       - spark-master
     environment:
-      SPARK_MODE: worker
+      SPARK_mode: worker
       SPARK_WORKER_CORES: 2
       SPARK_WORKER_MEMORY: 1g
       SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
+      SPARK_WORKER_HOST: spark-worker
+      SPARK_WORKER_WEBUI_PORT: 8081
     networks:
       - confluent
   
