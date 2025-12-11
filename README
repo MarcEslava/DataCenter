@@ -147,5 +147,4 @@ docker compose run --rm apiserver airflow db migrate
     ProxyPassReverse /spark/  http://spark-master:8080/
 
 
-</selection>
 
