@@ -179,7 +179,7 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./requirements.txt:/opt/airflow/requirements.txt
-      - ./httpd/airflow.cfg:/airflow.cfg
+      - ./conf/airflow.cfg:/airflow.cfg
     ports:
       - "8080:8080"
     networks:
