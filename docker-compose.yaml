@@ -179,13 +179,15 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./requirements.txt:/opt/airflow/requirements.txt
-      - ./httpd/airflow.cfg:/airflow.cfg
+      - ./conf/airflow.cfg:/airflow.cfg
     ports:
       - "8080:8080"
     networks:
       - confluent
   reverse-proxy:
       image: httpd:2.4
+      profiles:
+        - "dev"
       ports:
         - "8088:80"
         - "443:443"
@@ -227,7 +229,7 @@ services:
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__COREdoc__LOAD_EXAMPLES: "false"
       AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
       # AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}

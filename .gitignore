@@ -103,4 +103,5 @@ Thumbs.db
 .env
 secrets/
 dags/tests/
-httpd/
+conf/httpd_conf
+
