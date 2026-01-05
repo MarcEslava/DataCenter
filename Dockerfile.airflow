@@ -1,0 +1,12 @@
+# Custom Airflow image with pre-installed dependencies for faster startup
+FROM apache/airflow:3.1.3
+
+USER root
+
+# Copy requirements and install dependencies in one layer
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r /tmp/requirements.txt && \
+    rm -rf /tmp/requirements.txt /root/.cache/pip
+
+USER airflow
