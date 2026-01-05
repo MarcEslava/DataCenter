@@ -1,3 +1,20 @@
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
+    AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:-this_is_a_very_secured_key_change_in_production}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    FORWARDED_ALLOW_IPS: "*"
+  volumes:
+    - ./dags:/opt/airflow/dags
+  depends_on:
+    - postgres
+  networks:
+    - confluent
+
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
@@ -29,6 +46,15 @@ services:
     ports:
       - "9092:9092"
       - "9101:9101"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -43,7 +69,7 @@ services:
       KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore_creds
       KAFKA_SSL_CLIENT_AUTH: required        # set 'required' if you want mTLS
       KAFKA_LISTENER_NAME_EXTERNAL_SASL_ENABLED_MECHANISMS: SCRAM-SHA-512
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
       KAFKA_JMX_PORT: 9101
       KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
@@ -53,8 +79,12 @@ services:
       CONFLUENT_METRICS_REPORTER_TOPIC_CREATE: "true"  # auto-create _confluent-metrics
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,EXTERNAL://kafka.ecoceutics.com:9092
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/jaas.conf -Dzookeeper.sasl.client=true -Dzookeeper.sasl.client.username=kafka"
+      CONFLUENT_CRUISE_CONTROL_ENABLE: "false"
+      
     volumes:
       - ./secrets/kafka:/etc/kafka/secrets
+      # Mount log4j.properties to the default Confluent Platform location
+      - ./secrets/kafka/log4j.properties:/etc/kafka/log4j.properties:ro
     healthcheck:
       # Succeeds when broker answers the metadata call
       test: ["CMD", "bash", "-lc", "kafka-broker-api-versions --bootstrap-server localhost:29092 >/dev/null 2>&1"]
@@ -99,8 +129,6 @@ services:
       CONTROL_CENTER_BOOTSTRAP_SERVERS: broker:29092
       CONTROL_CENTER_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
       CONTROL_CENTER_REPLICATION_FACTOR: 1
-      CONTROL_CENTER_CONNECT_CONNECT-DEFAULT_CLUSTER: 'connect:8083'
-      CONTROL_CENTER_CONNECT_CONNECT_CLUSTER: "http://connect:8083"
       CONTROL_CENTER_CONNECT_connect-default_CLUSTER: "http://connect:8083"
     networks:
       - confluent
@@ -145,130 +173,119 @@ services:
       - confluent
 
   postgres:
-    image: postgres:14.0
+    image: postgres:14-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
     networks:
       - confluent
 
   apiserver:
-    image: apache/airflow:3.1.3
-    # apiserver
+    <<: *airflow-common
     command: >
-      bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt  && exec airflow api-server"
+      bash -lc "exec airflow api-server"
     depends_on:
-      - postgres
-      - scheduler
-      - dag-processor
+      postgres:
+        condition: service_started
+      scheduler:
+        condition: service_started
+      dag-processor:
+        condition: service_started
     environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
-      # AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
-      # AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
-      # AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
-      # AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256
-      # AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      FORWARDED_ALLOW_IPS: "*"
-      # AIRFLOW__API__BASE_URL: ${AIRFLOW_API_BASE_URL}
-
+      <<: *airflow-common-env
+      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.fab_auth
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
     volumes:
       - ./dags:/opt/airflow/dags
-      - ./requirements.txt:/opt/airflow/requirements.txt
       - ./conf/airflow.cfg:/airflow.cfg
     ports:
       - "8080:8080"
+  reverse-proxy:
+    image: httpd:2.4-alpine
+    profiles:
+      - "dev"
+    ports:
+      - "8088:80"
+      - "443:443"
+    volumes:
+      - ./httpd/httpd.conf:/usr/local/apache2/conf/httpd.conf
     networks:
       - confluent
-  reverse-proxy:
-      image: httpd:2.4
-      profiles:
-        - "dev"
-      ports:
-        - "8088:80"
-        - "443:443"
-      volumes:
-        - ./httpd/httpd.conf:/usr/local/apache2/conf/httpd.conf
-      networks:
-        - confluent
 
   scheduler:
-    image: apache/airflow:3.1.3
-    command: bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt  && exec airflow scheduler"
-    depends_on:
-      - postgres
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./requirements.txt:/opt/airflow/requirements.txt
+    <<: *airflow-common
+    command: bash -lc "exec airflow scheduler"
     environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
-      AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
+      <<: *airflow-common-env
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
-      # AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
-      # AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256
-      # AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      # AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
-      # AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      FORWARDED_ALLOW_IPS: "*"
-      # AIRFLOW__API__BASE_URL: ${AIRFLOW_API_BASE_URL}
-    networks:
-      - confluent
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
 
   dag-processor:
-    image: apache/airflow:3.1.3
-    command: bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt && exec airflow dag-processor"
-    depends_on:
-      - postgres
+    <<: *airflow-common
+    command: bash -lc "exec airflow dag-processor"
     environment:
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__COREdoc__LOAD_EXAMPLES: "false"
-      AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
+      <<: *airflow-common-env
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
-      # AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
-      # AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256 
-      # AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      # AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
-      # AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      FORWARDED_ALLOW_IPS: "*"
-      # AIRFLOW__API__BASE_URL: ${AIRFLOW_API_BASE_URL}
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./requirements.txt:/opt/airflow/requirements.txt
-      # - ./logs:/opt/airflow/logs
-    networks:
-      - confluent
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
 
   spark-master:
-      image: apache/spark:4.0.1-scala2.13-java21-python3-r-ubuntu
-      command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
-      environment:
-        SPARK_MODE: master
-        SPARK_MASTER_HOST: spark-master
-        SPARK_MASTER_PORT: 7077
-        SPARK_MASTER_WEBUI_PORT: 8080
-        SPARK_MASTER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
-        SPARK_PUBLIC_DNS: datahub.local
-      ports:
-        - "9090:8080"
-        - "7077:7077"
-      networks:
-        - confluent
+    image: apache/spark:4.0.1-scala2.13-java21-python3-r-ubuntu
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    environment:
+      SPARK_MODE: master
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: 7077
+      SPARK_MASTER_WEBUI_PORT: 8080
+      SPARK_MASTER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
+      SPARK_PUBLIC_DNS: datahub.local
+    ports:
+      - "9090:8080"
+      - "7077:7077"
+    networks:
+      - confluent
   spark-worker:
     image: apache/spark:4.0.1-scala2.13-java21-python3-r-ubuntu
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     depends_on:
       - spark-master
     environment:
-      SPARK_mode: worker
+      SPARK_MODE: worker
       SPARK_WORKER_CORES: 2
       SPARK_WORKER_MEMORY: 1g
       SPARK_MASTER_URL: spark://spark-master:7077
@@ -292,6 +309,10 @@ services:
       - ~/.ssh:/home/app/.ssh:ro 
     networks:
       - confluent  
+
+volumes:
+  postgres_data:
+    driver: local
 
 networks:
   confluent:
