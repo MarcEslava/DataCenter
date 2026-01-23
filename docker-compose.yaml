@@ -1,34 +1,70 @@
+# ─────────────────────────────────────────────────────────────
+# YAML Anchors - Reusable blocks to reduce redundancy
+# ─────────────────────────────────────────────────────────────
+
+x-common: &common
+  restart: unless-stopped
+  networks: [confluent]
+
+x-healthcheck: &healthcheck-defaults
+  interval: 10s
+  timeout: 5s
+  retries: 5
+
+x-deploy-small: &deploy-small
+  resources:
+    limits: { cpus: '1', memory: 1G }
+    reservations: { cpus: '0.25', memory: 512M }
+
+x-deploy-medium: &deploy-medium
+  resources:
+    limits: { cpus: '2', memory: 2G }
+    reservations: { cpus: '0.5', memory: 1G }
+
+x-airflow-common: &airflow-common
+  <<: *common
+  image: apache/airflow:3.0.1
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
+    AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:-this_is_a_very_secured_key_change_in_production}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__LOGGING__LOGGING_LEVEL: ERROR
+    AIRFLOW__WEBSERVER__BASE_URL: http://datahub.local/airflow
+    FORWARDED_ALLOW_IPS: "*"
+  volumes:
+    - ./dags:/opt/airflow/dags
+  depends_on:
+    - postgres
+
 services:
   zookeeper:
+    <<: *common
     image: confluentinc/cp-zookeeper:7.4.0
-    hostname: zookeeper
-    ports:
-      - "2181:2181"
+    ports: ["2181:2181"]
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
       ZOOKEEPER_AUTH_PROVIDER_SASL: org.apache.zookeeper.server.auth.SASLAuthenticationProvider
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/zookeeper_jaas.conf"
       ZOOKEEPER_ALLOW_SASL_ANONYMOUS: "false"
+      ZOOKEEPER_LOG4J_ROOT_LOGLEVEL: ERROR
     volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
       - ./secrets/kafka:/etc/kafka
     healthcheck:
+      <<: *healthcheck-defaults
       test: ["CMD", "bash", "-c", "echo 'ruok' | nc localhost 2181"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - confluent
+    deploy: *deploy-small
 
   broker:
+    <<: *common
     image: confluentinc/cp-server:7.4.0
-    hostname: broker
     depends_on:
-      zookeeper:
-        condition: service_healthy
-    ports:
-      - "9092:9092"
-      - "9101:9101"
+      zookeeper: { condition: service_healthy }
+    ports: ["9092:9092", "9101:9101"]
+    deploy: *deploy-medium
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -43,7 +79,7 @@ services:
       KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore_creds
       KAFKA_SSL_CLIENT_AUTH: required        # set 'required' if you want mTLS
       KAFKA_LISTENER_NAME_EXTERNAL_SASL_ENABLED_MECHANISMS: SCRAM-SHA-512
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
       KAFKA_JMX_PORT: 9101
       KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
@@ -53,247 +89,216 @@ services:
       CONFLUENT_METRICS_REPORTER_TOPIC_CREATE: "true"  # auto-create _confluent-metrics
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,EXTERNAL://kafka.ecoceutics.com:9092
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/jaas.conf -Dzookeeper.sasl.client=true -Dzookeeper.sasl.client.username=kafka"
+      CONFLUENT_CRUISE_CONTROL_ENABLE: "false"
+      KAFKA_LOG4J_ROOT_LOGLEVEL: ERROR
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
     volumes:
+      - kafka_data:/var/lib/kafka/data
       - ./secrets/kafka:/etc/kafka/secrets
     healthcheck:
-      # Succeeds when broker answers the metadata call
+      <<: *healthcheck-defaults
       test: ["CMD", "bash", "-lc", "kafka-broker-api-versions --bootstrap-server localhost:29092 >/dev/null 2>&1"]
-      interval: 10s
-      timeout: 5s
       retries: 12
       start_period: 30s
-    networks: 
-      - confluent
 
   schema-registry:
+    <<: *common
     image: confluentinc/cp-schema-registry:7.4.0
-    hostname: schema-registry
     depends_on:
-      broker:
-        condition: service_healthy
-    ports:
-      - "8081:8081"
+      broker: { condition: service_healthy }
+    ports: ["8081:8081"]
     environment:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: broker:29092
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 1
+      SCHEMA_REGISTRY_MASTER_ELIGIBILITY: "true"
+      SCHEMA_REGISTRY_KAFKASTORE_INIT_TIMEOUT_MS: 120000
+      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: ERROR
     healthcheck:
-      test: ["CMD", "bash", "-lc", "curl -f http://localhost:8081/subjects || exit 1"]
-      interval: 10s
-      timeout: 5s
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
       retries: 10
-    networks:
-      - confluent
+      start_period: 60s
+    deploy: *deploy-small
 
   control-center:
+    <<: *common
     image: confluentinc/cp-enterprise-control-center:7.4.0
-    hostname: control-center
     depends_on:
-      broker:
-        condition: service_healthy
-      schema-registry:
-        condition: service_healthy
-    ports:
-      - "9021:9021"
+      broker: { condition: service_healthy }
+      schema-registry: { condition: service_healthy }
+    ports: ["9021:9021"]
     environment:
       CONTROL_CENTER_BOOTSTRAP_SERVERS: broker:29092
-      CONTROL_CENTER_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
+      CONTROL_CENTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       CONTROL_CENTER_REPLICATION_FACTOR: 1
-      CONTROL_CENTER_CONNECT_CONNECT-DEFAULT_CLUSTER: 'connect:8083'
-      CONTROL_CENTER_CONNECT_CONNECT_CLUSTER: "http://connect:8083"
-      CONTROL_CENTER_CONNECT_connect-default_CLUSTER: "http://connect:8083"
-    networks:
-      - confluent
+      CONTROL_CENTER_CONNECT_connect-default_CLUSTER: http://connect:8083
+      CONTROL_CENTER_INTERNAL_TOPICS_REPLICATION: 1
+      CONTROL_CENTER_COMMAND_TOPIC_REPLICATION: 1
+      CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_REPLICATION: 1
+      CONTROL_CENTER_METRICS_TOPIC_REPLICATION: 1
+      CONTROL_CENTER_LOG4J_ROOT_LOGLEVEL: ERROR
+    deploy: *deploy-medium
   connect:
+    <<: *common
     image: confluentinc/cp-kafka-connect:7.4.0
     depends_on:
-      - broker
-      - schema-registry
-    # (Optional) remove host port if you only access via Apache
-    ports:
-      - "8083:8083"
+      broker: { condition: service_healthy }
+      schema-registry: { condition: service_healthy }
+    ports: ["8083:8083"]
+    deploy: *deploy-small
     environment:
-      # --- REQUIRED basics ---
       CONNECT_BOOTSTRAP_SERVERS: broker:29092
-      CONNECT_GROUP_ID: compose-connect-group     
-
+      CONNECT_GROUP_ID: compose-connect-group
       CONNECT_CONFIG_STORAGE_TOPIC: docker-connect-configs
       CONNECT_OFFSET_STORAGE_TOPIC: docker-connect-offsets
       CONNECT_STATUS_STORAGE_TOPIC: docker-connect-status
       CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
       CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
       CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
-
       CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
       CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
       CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
-
-      CONNECT_LISTENERS: "http://0.0.0.0:8083"
-      CONNECT_REST_ADVERTISED_HOST_NAME: "connect"
+      CONNECT_LISTENERS: http://0.0.0.0:8083
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
       CONNECT_REST_ADVERTISED_PORT: "8083"
-
-      # --- Plugins ---
-      CONNECT_PLUGIN_PATH: "/usr/share/java,/etc/kafka-connect/jars"
+      CONNECT_PLUGIN_PATH: /usr/share/java,/etc/kafka-connect/jars
+      CONNECT_LOG4J_ROOT_LOGLEVEL: ERROR
     volumes:
       - ./kafka-connect:/etc/kafka-connect/jars
     healthcheck:
-      test: ["CMD", "bash", "-lc", "curl -sf http://localhost:8083/connectors || exit 1"]
-      interval: 10s
-      timeout: 5s
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-sf", "http://localhost:8083/connectors"]
       retries: 10
-    networks:
-      - confluent
 
   postgres:
-    image: postgres:14.0
+    <<: *common
+    image: postgres:14-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-    networks:
-      - confluent
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
 
   apiserver:
-    image: apache/airflow:3.1.3
-    # apiserver
-    command: >
-      bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt  && exec airflow api-server"
+    <<: *airflow-common
+    command: bash -lc "exec airflow api-server"
     depends_on:
-      - postgres
-      - scheduler
-      - dag-processor
+      postgres: { condition: service_started }
+      scheduler: { condition: service_started }
+      dag-processor: { condition: service_started }
     environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
-      # AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
-      # AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
-      # AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
-      # AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256
-      # AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      FORWARDED_ALLOW_IPS: "*"
-      # AIRFLOW__API__BASE_URL: ${AIRFLOW_API_BASE_URL}
-
+      <<: *airflow-common-env
+      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.fab_auth
+    deploy: *deploy-medium
     volumes:
       - ./dags:/opt/airflow/dags
-      - ./requirements.txt:/opt/airflow/requirements.txt
       - ./conf/airflow.cfg:/airflow.cfg
-    ports:
-      - "8080:8080"
-    networks:
-      - confluent
+    ports: ["8080:8080"]
   reverse-proxy:
-      image: httpd:2.4
-      profiles:
-        - "dev"
-      ports:
-        - "8088:80"
-        - "443:443"
-      volumes:
-        - ./httpd/httpd.conf:/usr/local/apache2/conf/httpd.conf
-      networks:
-        - confluent
+    image: httpd:2.4-alpine
+    profiles: ["dev"]
+    ports: ["8088:80", "443:443"]
+    volumes:
+      - ./conf/httpd_conf/httpd.conf:/usr/local/apache2/conf/httpd.conf
+    networks: [confluent]
 
   scheduler:
-    image: apache/airflow:3.1.3
-    command: bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt  && exec airflow scheduler"
-    depends_on:
-      - postgres
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./requirements.txt:/opt/airflow/requirements.txt
+    <<: *airflow-common
+    command: bash -lc "exec airflow scheduler"
     environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
-      AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
+      <<: *airflow-common-env
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
-      # AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
-      # AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256
-      # AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      # AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
-      # AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      FORWARDED_ALLOW_IPS: "*"
-      # AIRFLOW__API__BASE_URL: ${AIRFLOW_API_BASE_URL}
-    networks:
-      - confluent
+    deploy: *deploy-medium
 
   dag-processor:
-    image: apache/airflow:3.1.3
-    command: bash -lc "pip install --no-cache-dir -r /opt/airflow/requirements.txt && exec airflow dag-processor"
-    depends_on:
-      - postgres
+    <<: *airflow-common
+    command: bash -lc "exec airflow dag-processor"
     environment:
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__COREdoc__LOAD_EXAMPLES: "false"
-      AIRFLOW__API__SECRET_KEY: this_is_a_very_secured_key
+      <<: *airflow-common-env
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
-      # AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_JWT_SECRET}
-      # AIRFLOW__API_AUTH__JWT_ALGORITHM: HS256 
-      # AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      # AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
-      # AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET}
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      FORWARDED_ALLOW_IPS: "*"
-      # AIRFLOW__API__BASE_URL: ${AIRFLOW_API_BASE_URL}
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./requirements.txt:/opt/airflow/requirements.txt
-      # - ./logs:/opt/airflow/logs
-    networks:
-      - confluent
+    deploy:
+      resources:
+        limits: { cpus: '1', memory: 1G }
+        reservations: { cpus: '0.25', memory: 256M }
 
   spark-master:
-      image: apache/spark:4.0.1-scala2.13-java21-python3-r-ubuntu
-      command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
-      environment:
-        SPARK_MODE: master
-        SPARK_MASTER_HOST: spark-master
-        SPARK_MASTER_PORT: 7077
-        SPARK_MASTER_WEBUI_PORT: 8080
-        SPARK_MASTER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
-        SPARK_PUBLIC_DNS: datahub.local
-      ports:
-        - "9090:8080"
-        - "7077:7077"
-      networks:
-        - confluent
+    <<: *common
+    image: apache/spark:4.0.1-scala2.13-java21-python3-r-ubuntu
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    environment:
+      SPARK_MODE: master
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: 7077
+      SPARK_MASTER_WEBUI_PORT: 8080
+      SPARK_MASTER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
+      SPARK_PUBLIC_DNS: datahub.local
+      SPARK_NO_DAEMONIZE: "true"
+      SPARK_LOG_LEVEL: ERROR
+    ports: ["9090:8080", "7077:7077"]
+    deploy: *deploy-medium
+
   spark-worker:
+    <<: *common
     image: apache/spark:4.0.1-scala2.13-java21-python3-r-ubuntu
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     depends_on:
-      - spark-master
+      spark-master: { condition: service_started }
     environment:
-      SPARK_mode: worker
+      SPARK_MODE: worker
       SPARK_WORKER_CORES: 2
       SPARK_WORKER_MEMORY: 1g
       SPARK_MASTER_URL: spark://spark-master:7077
       SPARK_WORKER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
       SPARK_WORKER_HOST: spark-worker
       SPARK_WORKER_WEBUI_PORT: 8081
-    networks:
-      - confluent
+      SPARK_LOG_LEVEL: ERROR
+    deploy:
+      resources:
+        limits: { cpus: '2', memory: 2G }
+        reservations: { cpus: '0.5', memory: 512M }
   
   python-master:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    hostname: python-master
+    image: python-master
+    build: .
     working_dir: /work
     tty: true
     stdin_open: true
     volumes:
-      - ./apps:/work/apps        
-      - ./data:/work/data        
-      - ~/.ssh:/home/app/.ssh:ro 
-    networks:
-      - confluent  
+      - ./apps:/work/apps
+      - ./data:/work/data
+      - spark_checkpoint:/work/checkpoint
+      - ~/.ssh:/home/app/.ssh:ro
+    networks: [confluent]
+
+  mongo:
+    <<: *common
+    image: mongo:7
+    profiles: ["dev"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+    ports: ["27017:27017"]
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  postgres_data:
+  zookeeper_data:
+  zookeeper_logs:
+  kafka_data:
+  spark_checkpoint:
+  mongo_data:
 
 networks:
   confluent:
-    driver: bridge
 
