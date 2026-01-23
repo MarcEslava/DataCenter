@@ -5,7 +5,7 @@ import logging
 import os
 
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "broker:29092")    # or "localhost:9092" if running on host
-MONGO_URI       = os.getenv("mongodb://mongo:27017/?authSource=admin", "mongodb://root:example@mongo:27017/?authSource=admin")
+MONGO_URI       = os.getenv("MONGO_URI", "mongodb://root:example@mongo:27017/?authSource=admin")
 DB_NAME         = os.getenv("MONGO_DB", "spark_streams")
 COLL_NAME       = os.getenv("MONGO_COLL", "created_users")
 CHECKPOINT_DIR  = os.getenv("CHECKPOINT_DIR", "/work/checkpoint")
