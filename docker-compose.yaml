@@ -1,6 +1,3 @@
-# ─────────────────────────────────────────────────────────────
-# YAML Anchors - Reusable blocks to reduce redundancy
-# ─────────────────────────────────────────────────────────────
 
 x-common: &common
   restart: unless-stopped
@@ -90,7 +87,9 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,EXTERNAL://kafka.ecoceutics.com:9092
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/jaas.conf -Dzookeeper.sasl.client=true -Dzookeeper.sasl.client.username=kafka"
       CONFLUENT_CRUISE_CONTROL_ENABLE: "false"
-      KAFKA_LOG4J_ROOT_LOGLEVEL: ERROR
+      CONFLUENT_TELEMETRY_ENABLED: "false"
+      KAFKA_LOG4J_ROOT_LOGLEVEL: FATAL
+      KAFKA_LOG4J_LOGGERS: "kafka.coordinator.group=FATAL,kafka.server.ZkAdminManager=FATAL,kafka.controller=FATAL"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
     volumes:
@@ -140,6 +139,7 @@ services:
       CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_REPLICATION: 1
       CONTROL_CENTER_METRICS_TOPIC_REPLICATION: 1
       CONTROL_CENTER_LOG4J_ROOT_LOGLEVEL: ERROR
+      CONFLUENT_TELEMETRY_ENABLED: "false"
     deploy: *deploy-medium
   connect:
     <<: *common
