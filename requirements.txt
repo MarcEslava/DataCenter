@@ -1,2 +1,4 @@
-kafka-python
-requests
+# Core dependencies with pinned versions for reproducibility
+kafka-python>=2.0.2,<3.0.0
+requests>=2.31.0,<3.0.0
+cryptography>=41.0.0,<43.0.0
