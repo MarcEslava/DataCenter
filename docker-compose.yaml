@@ -25,6 +25,10 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:-this_is_a_very_secured_key_change_in_production}
+    AIRFLOW__CORE__INTERNAL_API_SECRET_KEY: ${AIRFLOW_INTERNAL_API_SECRET_KEY:-NOmmb1RlQ6e+rFHGLPzgng==}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-OXdEIRar9V1kjsXKMv4v63_37n3uUsHHaOyvw0xtqLs=}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-tcDqV0CAB6yubbpSpxjdIA==}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:-jpI3a/LHtBgnJZ8KUx90zg==}
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__LOGGING__LOGGING_LEVEL: ERROR
     AIRFLOW__WEBSERVER__BASE_URL: http://datahub.local/airflow
@@ -213,9 +217,10 @@ services:
   scheduler:
     <<: *airflow-common
     command: bash -lc "exec airflow scheduler"
+    hostname: scheduler
     environment:
       <<: *airflow-common-env
-      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://apiserver:8080/execution/
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
     deploy: *deploy-medium
 
@@ -224,7 +229,7 @@ services:
     command: bash -lc "exec airflow dag-processor"
     environment:
       <<: *airflow-common-env
-      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://apiserver:8080/execution/
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
     deploy:
       resources:
