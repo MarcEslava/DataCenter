@@ -2,7 +2,8 @@
 EcoVital Orders ETL Pipeline
 
 Extracts orders from LogiCommerce, enriches with customer data from Ecoceutics,
-and produces a fact table for pharmacy order analysis.
+looks up alliance client IDs via SSH/DB, and produces a fact table for pharmacy
+order analysis. Uploads result to FTP.
 """
 
 from airflow import DAG
@@ -16,6 +17,9 @@ from time import sleep
 import json
 import ast
 from utils.ftp import FTPConn
+from utils.clsSSHTunnel import SSHTunnel
+from utils.clsSQL import SQLConnection
+
 
 # ─────────────────────────────────────────────────────────────
 # Configuration
@@ -29,10 +33,27 @@ ECOCEUTICS_API_BASE = "https://apifidfarma.ecoceutics.com/v1"
 ECOCEUTICS_API_KEY = "657A8288P7156"
 
 API_RATE_LIMIT_DELAY = 0.3
-OUTPUT_PATH = "/opt/airflow/dags/output/EcoVital_FactTable.xlsx"
+OUTPUT_PATH = "/opt/airflow/dags/output/EcoVital_FactTable.csv"
 
 FTP_CONN_ID = "alloga_ftp"
-FTP_REMOTE_PATH = "/EcoVital_FactTable.csv"
+FTP_REMOTE_PATH = "fichero/EcoVital_FactTable.csv"
+
+SSH_HOST = "cecobd1.ecoceutics.com"
+SSH_USER = "U4NsrvTwqF"
+SSH_PASSWORD = ""
+SSH_PORT = 12984
+SSH_KEY = "/root/.ssh/id_ed25519"
+DB_HOST = "127.0.0.1"
+DB_PORT = 3306
+DB_USER = "wED2iQTl"
+DB_PASSWORD = "BS0jIbTe"
+DB_NAME = "fidfarma"
+
+TAX_MAPPING = {
+    "1": 21,
+    "2": 10,
+    "3": 4,
+}
 
 default_args = {
     'owner': 'data-team',
@@ -51,17 +72,15 @@ dag = DAG(
 
 
 # ─────────────────────────────────────────────────────────────
-# Utility Functions (Pure - No Side Effects)
+# Utility Functions
 # ─────────────────────────────────────────────────────────────
 
 def create_sha256_token(secret: str) -> str:
-    """Create Base64-encoded SHA256 hash from secret."""
     digest = hashlib.sha256(secret.encode("utf-8")).digest()
     return base64.b64encode(digest).decode("utf-8")
 
 
 def build_logicommerce_headers(token: str) -> dict:
-    """Build headers for LogiCommerce API requests."""
     return {
         "Accept": "application/json",
         "Authorization": f"Basic {token}",
@@ -71,22 +90,29 @@ def build_logicommerce_headers(token: str) -> dict:
 
 
 def build_ecoceutics_headers() -> dict:
-    """Build headers for Ecoceutics API requests."""
-    return {
-        "Accept": "application/json",
-        "countryCode": "ES",
-    }
+    return {"Accept": "application/json", "countryCode": "ES"}
+
+
+def extract_tax_value(taxes) -> float:
+    if isinstance(taxes, list) and taxes and isinstance(taxes[0], dict):
+        tax_id = str(taxes[0].get("TAX", {}).get("ID", ""))
+        return TAX_MAPPING.get(tax_id, 0)
+    return 0
+
+
+def extract_re_value(taxes) -> float:
+    if isinstance(taxes, list) and taxes and isinstance(taxes[0], dict):
+        return taxes[0].get("RERATE", 0)
+    return 0
 
 
 def extract_discount_value(discounts: list) -> float:
-    """Extract discount value from DISCOUNTS array."""
     if isinstance(discounts, list) and discounts and isinstance(discounts[0], dict):
         return discounts[0].get("DISCOUNTVALUE", 0)
     return 0
 
 
 def parse_json_cell(value) -> dict | list | None:
-    """Parse a cell that may contain JSON string, dict, or list."""
     if value is None:
         return None
     if isinstance(value, (dict, list)):
@@ -101,7 +127,6 @@ def parse_json_cell(value) -> dict | list | None:
 
 
 def normalize_billing_item(item) -> dict:
-    """Normalize a single billing address item to dict."""
     if isinstance(item, list):
         if len(item) == 0:
             return {}
@@ -114,19 +139,40 @@ def normalize_billing_item(item) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# API Functions (Single Responsibility: Make HTTP Request)
+# API Functions
 # ─────────────────────────────────────────────────────────────
 
+def fetch_logicommerce_paginated(token: str, endpoint: str, key: str) -> dict:
+    headers = build_logicommerce_headers(token)
+    url = f"{LOGICOMMERCE_API_BASE}/{endpoint}"
+    all_items = []
+    page = 1
+
+    while True:
+        response = requests.get(url, headers=headers, params={"page": page})
+        response.raise_for_status()
+        data = response.json()
+        items = data.get(key, [])
+        all_items.extend(items)
+        total = data.get("ITEMS", 0)
+        pager = data.get("PAGERPARAMETERS", {})
+        per_page = pager.get("PERPAGE", "?")
+        pages_total = (total + int(per_page) - 1) // int(per_page) if str(per_page).isdigit() and int(per_page) > 0 else "?"
+        print(f"  page {page}/{pages_total}: +{len(items)} rows  [{len(all_items)}/{total} fetched]")
+        if len(all_items) >= total:
+            break
+        page += 1
+        sleep(API_RATE_LIMIT_DELAY)
+
+    data[key] = all_items
+    return data
+
+
 def fetch_logicommerce_orders(token: str) -> dict:
-    """Fetch orders list from LogiCommerce API."""
-    url = f"{LOGICOMMERCE_API_BASE}/orders"
-    response = requests.get(url, headers=build_logicommerce_headers(token))
-    response.raise_for_status()
-    return response.json()
+    return fetch_logicommerce_paginated(token, "orders", "ORDERS")
 
 
 def fetch_logicommerce_order_detail(token: str, order_number: str) -> dict:
-    """Fetch single order detail from LogiCommerce API."""
     url = f"{LOGICOMMERCE_API_BASE}/orders/{order_number}"
     response = requests.get(url, headers=build_logicommerce_headers(token))
     response.raise_for_status()
@@ -134,15 +180,10 @@ def fetch_logicommerce_order_detail(token: str, order_number: str) -> dict:
 
 
 def fetch_logicommerce_users(token: str) -> dict:
-    """Fetch users list from LogiCommerce API."""
-    url = f"{LOGICOMMERCE_API_BASE}/users"
-    response = requests.get(url, headers=build_logicommerce_headers(token))
-    response.raise_for_status()
-    return response.json()
+    return fetch_logicommerce_paginated(token, "users", "USERS")
 
 
 def fetch_ecoceutics_fid(nif: str) -> dict:
-    """Fetch FID data for a NIF from Ecoceutics API."""
     url = f"{ECOCEUTICS_API_BASE}/unit/{nif}/fid/?api_key={ECOCEUTICS_API_KEY}"
     response = requests.get(url, headers=build_ecoceutics_headers())
     response.raise_for_status()
@@ -150,17 +191,49 @@ def fetch_ecoceutics_fid(nif: str) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# Transform Functions (Single Responsibility: Transform Data)
+# DB / SSH
+# ─────────────────────────────────────────────────────────────
+
+def make_tunnel():
+    key_content = open(SSH_KEY).read() if SSH_KEY else None
+    return SSHTunnel(
+        ssh_host=SSH_HOST, ssh_port=SSH_PORT, ssh_username=SSH_USER,
+        ssh_password=SSH_PASSWORD or None, ssh_private_key=key_content,
+        remote_host=DB_HOST, remote_port=DB_PORT,
+    )
+
+
+def make_db(tunnel):
+    return SQLConnection(
+        db_host=DB_HOST, db_port=DB_PORT, db_database=DB_NAME,
+        db_username=DB_USER, db_password=DB_PASSWORD,
+        dialect="mysql", driver="pymysql",
+        ssh_tunnel=tunnel,
+    )
+
+
+def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
+    if not nif_list:
+        return pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
+    with make_tunnel() as tunnel, make_db(tunnel) as db:
+        df = db.get_table_info(
+            table_name='Unit',
+            cols='id, nif, id_unit_izaro',
+            where=f"nif IN ({', '.join(repr(n) for n in nif_list)})",
+        )
+        return df if not df.empty else pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
+
+
+# ─────────────────────────────────────────────────────────────
+# Transform Functions
 # ─────────────────────────────────────────────────────────────
 
 def extract_order_numbers(orders_data: dict) -> list:
-    """Extract document numbers from orders response."""
     df = pd.json_normalize(orders_data.get("ORDERS", []))
     return df['ID'].tolist()
 
 
 def normalize_order_detail(order_data: dict) -> pd.DataFrame:
-    """Normalize single order detail into DataFrame rows."""
     df = pd.json_normalize(
         order_data,
         record_path=["ORDERS", "DETAILS"],
@@ -177,30 +250,26 @@ def normalize_order_detail(order_data: dict) -> pd.DataFrame:
         "ORDERS.ORDERUSERS.NIF": "NIF"
     })
     df["DISCOUNTVALUE"] = df["DISCOUNTS"].apply(extract_discount_value)
-    return df[["PEDIDO", "DATE", "SKU", "QUANTITY", "PRICE", "DISCOUNTVALUE", "NIF", "TAXES"]]
+    df["RE"] = df["TAXES"].apply(extract_re_value)
+    df["TAXES"] = df["TAXES"].apply(extract_tax_value)
+    return df[["PEDIDO", "DATE", "SKU", "QUANTITY", "PRICE", "DISCOUNTVALUE", "NIF", "TAXES", "RE"]]
 
 
-def extract_unique_nifs(pedidos: list) -> list:
-    """Extract unique NIF values from order details."""
-    df = pd.DataFrame(pedidos)
-    return df['NIF'].drop_duplicates().tolist()
+def extract_unique_nifs(pedidos_df: pd.DataFrame) -> list:
+    return pedidos_df['NIF'].drop_duplicates().tolist()
 
 
 def normalize_billing_addresses(users_data: dict) -> pd.DataFrame:
-    """Extract and normalize billing addresses from users data."""
     users = pd.json_normalize(users_data.get("USERS", []))
-
     col = "ADDRESSBOOK.BILLINGADDRESS"
     if col not in users.columns:
         return pd.DataFrame()
-
     parsed = users[col].apply(parse_json_cell)
     normalized = [normalize_billing_item(item) for item in parsed]
     return pd.json_normalize(normalized)
 
 
 def extract_fid_from_response(nif_data: list) -> pd.DataFrame:
-    """Extract FID from API responses."""
     df = pd.DataFrame(nif_data, columns=['raw', 'nif'])
     df['id'] = df['raw'].apply(
         lambda x: x[0].get('id') if isinstance(x, list) and x else None
@@ -209,7 +278,6 @@ def extract_fid_from_response(nif_data: list) -> pd.DataFrame:
 
 
 def merge_orders_with_nif(pedidos_df: pd.DataFrame, nif_df: pd.DataFrame) -> pd.DataFrame:
-    """Merge order details with NIF/FID mapping."""
     df = nif_df.merge(pedidos_df, left_on='nif', right_on='NIF', how='right')
     df = df.drop(columns=['nif'])
     return df.rename(columns={
@@ -223,12 +291,10 @@ def merge_orders_with_nif(pedidos_df: pd.DataFrame, nif_df: pd.DataFrame) -> pd.
 
 
 def merge_with_billing(orders_df: pd.DataFrame, billing_df: pd.DataFrame) -> pd.DataFrame:
-    """Merge orders with billing address data."""
     return orders_df.merge(billing_df, left_on='NIF', right_on='NIF', how='left')
 
 
 def apply_final_column_mapping(df: pd.DataFrame) -> pd.DataFrame:
-    """Apply final column renaming for output."""
     mapping = {
         "PEDIDO": "Pedido",
         "FECHA": "F.Pedido",
@@ -242,80 +308,80 @@ def apply_final_column_mapping(df: pd.DataFrame) -> pd.DataFrame:
         "PRECIO": "Precio",
         "DTO": "Descuento",
         "NIF": "CustomerCifId",
-        "TAXES": "TAXES"
+        "TAXES": "Iva",
     }
     df = df.rename(columns=mapping)
     if 'Precio' in df.columns:
         df['Precio'] = df['Precio'].round(2)
-    return df
 
-
-def save_to_excel(df: pd.DataFrame, path: str) -> str:
-    """Save DataFrame to Excel file."""
-    df.to_excel(path, index=False, sheet_name="in")
-    return path
-
-def save_to_csv(df: pd.DataFrame, path: str) -> str:
-    """Save DataFrame to CSV file."""
-    df.to_csv(path, index=False)
-    return path
+    final_columns = [
+        "F.Pedido", "Pedido", "Farmacia", "Direcion", "Codigo Postal",
+        "Poblacion", "Provincia", "Codigo Producto", "C.Pedida",
+        "Precio", "Descuento", "Iva", "RE", "CustomerCifId", "Cliente Alliance",
+    ]
+    return df[[c for c in final_columns if c in df.columns]]
 
 
 # ─────────────────────────────────────────────────────────────
-# Airflow Task Functions (Orchestration Layer)
+# Airflow Task Functions
 # ─────────────────────────────────────────────────────────────
 
 def task_generate_token(**context):
-    """Task: Generate authentication token."""
     return create_sha256_token(LOGICOMMERCE_SECRET)
 
 
 def task_extract_orders(**context):
-    """Task: Fetch orders from LogiCommerce."""
     token = context['task_instance'].xcom_pull(task_ids='generate_token')
     return fetch_logicommerce_orders(token)
 
 
 def task_extract_users(**context):
-    """Task: Fetch users from LogiCommerce."""
     token = context['task_instance'].xcom_pull(task_ids='generate_token')
     return fetch_logicommerce_users(token)
 
 
 def task_transform_orders(**context):
-    """Task: Extract order numbers from orders data."""
     orders_data = context['task_instance'].xcom_pull(task_ids='extract_orders')
     return extract_order_numbers(orders_data)
 
 
 def task_extract_order_details(**context):
-    """Task: Fetch and normalize details for each order."""
     token = context['task_instance'].xcom_pull(task_ids='generate_token')
     order_numbers = context['task_instance'].xcom_pull(task_ids='transform_orders')
 
     all_details = []
     for order_num in order_numbers:
-        print(f"Processing order: {order_num}")
-        order_data = fetch_logicommerce_order_detail(token, order_num)
-        detail_df = normalize_order_detail(order_data)
-        all_details.append(detail_df)
+        try:
+            order_data = fetch_logicommerce_order_detail(token, order_num)
+            detail_df = normalize_order_detail(order_data)
+            all_details.append(detail_df)
+            print(f"  Order {order_num}: {len(detail_df)} rows")
+        except requests.HTTPError as e:
+            print(f"  Order {order_num}: SKIP ({e.response.status_code} - {e.response.json().get('msg', '')})")
         sleep(API_RATE_LIMIT_DELAY)
 
+    if not all_details:
+        return []
     results = pd.concat(all_details, ignore_index=True)
-    print(f"Fetched {len(results)} order detail rows")
+    print(f"Total: {len(results)} order detail rows")
     return results.to_dict('records')
 
 
 def task_extract_nif_data(**context):
-    """Task: Fetch FID for each unique NIF."""
     pedidos = context['task_instance'].xcom_pull(task_ids='extract_order_details')
-    nif_list = extract_unique_nifs(pedidos)
+    if not pedidos:
+        return []
+    pedidos_df = pd.DataFrame(pedidos)
+    nif_list = extract_unique_nifs(pedidos_df)
 
     results = []
     for nif in nif_list:
-        print(f"Processing NIF: {nif}")
-        fid_data = fetch_ecoceutics_fid(nif)
-        results.append([fid_data, nif])
+        try:
+            fid_data = fetch_ecoceutics_fid(nif)
+            results.append([fid_data, nif])
+            print(f"  NIF {nif}: OK")
+        except requests.HTTPError as e:
+            print(f"  NIF {nif}: SKIP ({e.response.status_code})")
         sleep(API_RATE_LIMIT_DELAY)
 
     print(f"Fetched FID for {len(results)} customers")
@@ -323,43 +389,72 @@ def task_extract_nif_data(**context):
 
 
 def task_transform_users(**context):
-    """Task: Extract billing addresses from users."""
     users_data = context['task_instance'].xcom_pull(task_ids='extract_users')
     billing_df = normalize_billing_addresses(users_data)
     print(f"Normalized {len(billing_df)} billing addresses")
     return billing_df.to_dict('records')
 
 
+def task_alliance_clients(**context):
+    pedidos = context['task_instance'].xcom_pull(task_ids='extract_order_details')
+    if not pedidos:
+        print("No orders to query")
+        return []
+    if not SSH_HOST:
+        print("SKIP - SSH_HOST not configured")
+        return []
+
+    pedidos_df = pd.DataFrame(pedidos)
+    nif_list = extract_unique_nifs(pedidos_df)
+    print(f"Querying Unit table for {len(nif_list)} NIFs...")
+    units_df = query_units_by_nifs(nif_list)
+    print(f"Found {len(units_df)} matches")
+    if units_df.empty:
+        return []
+    return units_df[['nif', 'id_unit_izaro']].to_dict('records')
+
+
 def task_load_fact_table(**context):
-    """Task: Merge all data and save fact table."""
     ti = context['task_instance']
 
-    # Pull data from upstream tasks
     pedidos = ti.xcom_pull(task_ids='extract_order_details')
     nif_data = ti.xcom_pull(task_ids='extract_nif_data')
     billing_data = ti.xcom_pull(task_ids='transform_users')
+    alliance_data = ti.xcom_pull(task_ids='alliance_clients')
 
-    # Convert to DataFrames
+    if not pedidos:
+        print("No data to merge")
+        return None
+
     pedidos_df = pd.DataFrame(pedidos)
-    billing_df = pd.DataFrame(billing_data)
-    nif_df = extract_fid_from_response(nif_data)
+    billing_df = pd.DataFrame(billing_data) if billing_data else pd.DataFrame()
+    nif_df = extract_fid_from_response(nif_data) if nif_data else pd.DataFrame(columns=['id', 'nif'])
+    alliance_df = pd.DataFrame(alliance_data) if alliance_data else pd.DataFrame(columns=['nif', 'id_unit_izaro'])
 
-    # Merge pipeline
     df = merge_orders_with_nif(pedidos_df, nif_df)
     df = merge_with_billing(df, billing_df)
+
+    if not alliance_df.empty:
+        df = df.merge(
+            alliance_df.rename(columns={'id_unit_izaro': 'Cliente Alliance'}),
+            left_on='NIF', right_on='nif', how='left'
+        )
+        df = df.drop(columns=['nif'], errors='ignore')
+
     df = apply_final_column_mapping(df)
 
-    # Save output
-    output_path = save_to_csv(df, OUTPUT_PATH)
-    print(f"Saved {len(df)} rows to {output_path}")
-    print(df.head())
-
-    return output_path
+    import os
+    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    df.to_csv(OUTPUT_PATH, index=False)
+    print(f"Saved {len(df)} rows to {OUTPUT_PATH}")
+    return OUTPUT_PATH
 
 
 def task_upload_to_ftp(**context):
-    """Task: Upload CSV to FTP server."""
     output_path = context['task_instance'].xcom_pull(task_ids='load_fact_table')
+    if not output_path:
+        print("No file to upload")
+        return
     with FTPConn.from_airflow(FTP_CONN_ID) as ftp:
         ftp.upload(output_path, FTP_REMOTE_PATH)
     print(f"Uploaded {output_path} to FTP: {FTP_REMOTE_PATH}")
@@ -411,6 +506,12 @@ transform_users_task = PythonOperator(
     dag=dag,
 )
 
+alliance_clients_task = PythonOperator(
+    task_id='alliance_clients',
+    python_callable=task_alliance_clients,
+    dag=dag,
+)
+
 load_task = PythonOperator(
     task_id='load_fact_table',
     python_callable=task_load_fact_table,
@@ -427,14 +528,15 @@ upload_ftp_task = PythonOperator(
 # Task Dependencies
 # ─────────────────────────────────────────────────────────────
 #
-#                    ┌─► extract_orders ─► transform_orders ─► extract_order_details ─► extract_nif ─┐
-# generate_token ───►│                                                                                ├─► load_fact_table
-#                    └─► extract_users ─► transform_users ───────────────────────────────────────────┘
+#                    ┌─► extract_orders ─► transform_orders ─► extract_order_details ─► extract_nif ──────┐
+# generate_token ───►│                                              │                                      ├─► load_fact_table ─► upload_to_ftp
+#                    └─► extract_users ─► transform_users ──────────┼─► alliance_clients ─────────────────┘
 #
 
 generate_token_task >> [extract_orders_task, extract_users_task]
 
 extract_orders_task >> transform_orders_task >> extract_order_details_task >> extract_nif_task
 extract_users_task >> transform_users_task
+extract_order_details_task >> alliance_clients_task
 
-[extract_nif_task, transform_users_task] >> load_task >> upload_ftp_task
+[extract_nif_task, transform_users_task, alliance_clients_task] >> load_task >> upload_ftp_task

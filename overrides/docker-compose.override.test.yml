@@ -1,0 +1,36 @@
+# =============================================================================
+# Test environment override
+# =============================================================================
+# Copy to /opt/ecopipeline/test/docker-compose.override.yml
+#
+# .env must contain:
+#   COMPOSE_PROJECT_NAME=ecopipeline-test
+#   (plus all other vars from the base .env)
+# =============================================================================
+
+services:
+  zookeeper:
+    ports: ["12181:2181"]
+
+  broker:
+    ports: ["19092:9092", "19101:9101"]
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,EXTERNAL://kafka.ecoceutics.com:19092
+
+  schema-registry:
+    ports: ["18081:8081"]
+
+  control-center:
+    ports: ["19021:9021"]
+
+  connect:
+    ports: ["18083:8083"]
+
+  apiserver:
+    ports: ["18080:8080"]
+
+  spark-master:
+    ports: ["19090:8080", "17077:7077"]
+
+  python-master:
+    container_name: python-testing-test

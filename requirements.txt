@@ -7,3 +7,4 @@ pymysql
 requests
 openpyxl
 sshtunnel
+sqlalchemy

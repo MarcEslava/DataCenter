@@ -273,17 +273,18 @@ services:
         reservations: { cpus: '0.5', memory: 512M }
   
   python-master:
-    image: python-master
-    build: .
-    working_dir: /work
+    image: python:3.11.2-slim
+    restart: unless-stopped
+    working_dir: /work/projects
     tty: true
     stdin_open: true
-    volumes:
-      - ./apps:/work/apps
-      - ./data:/work/data
-      - spark_checkpoint:/work/checkpoint
-      - ~/.ssh:/home/app/.ssh:ro
+    command: sleep infinity
     networks: [confluent]
+    environment:
+      GIT_SSH_COMMAND: "ssh -o StrictModes=no"
+    volumes:
+      - .:/work/projects
+      - ~/.ssh:/root/.ssh:ro
 
   mongo:
     <<: *common

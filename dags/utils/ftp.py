@@ -83,14 +83,27 @@ class FTPConn:
         return paramiko.SFTPClient.from_transport(transport)
 
     def _connect_ftp(self):
-        """Open plain FTP connection."""
+        """Open plain FTP connection with NAT-safe PASV."""
         from ftplib import FTP
+
+        class NatFTP(FTP):
+            """Override makepasv to use the control-connection IP instead of
+            whatever the server returns in its PASV response (NAT fix)."""
+            def makepasv(self):
+                host, port = super().makepasv()
+                # Use control socket IP if server returns a different/private IP
+                ctrl_host = self.sock.getpeername()[0]
+                if host != ctrl_host:
+                    print(f"[FTP DEBUG] PASV NAT fix: {host} -> {ctrl_host}")
+                return ctrl_host, port
+
         print(f"[FTP DEBUG] Opening FTP connection to {self.host}:{self.port}")
-        ftp = FTP()
-        ftp.connect(self.host, self.port)
+        ftp = NatFTP()
+        ftp.connect(self.host, self.port, timeout=30)
         print(f"[FTP DEBUG] Logging in as user: {self.user}")
         ftp.login(self.user, self.password)
-        print(f"[FTP DEBUG] FTP connection established")
+        ftp.set_pasv(True)
+        print(f"[FTP DEBUG] FTP connection established (NAT-safe PASV)")
         return ftp
 
     def __enter__(self):
@@ -122,14 +135,24 @@ class FTPConn:
                 self._conn.storbinary(f"STOR {remote_path}", f)
         print(f"[FTP DEBUG] upload() done: {local_path} -> {remote_path}")
 
-    def upload_bytes(self, data: bytes, remote_path: str) -> None:
+    def upload_bytes(self, data: bytes, remote_path: str, retries: int = 3) -> None:
         """Upload raw bytes to remote path."""
         print(f"[FTP DEBUG] upload_bytes() size={len(data)} bytes remote={remote_path}")
-        buf = io.BytesIO(data)
         if self.protocol == "sftp":
+            buf = io.BytesIO(data)
             self._conn.putfo(buf, remote_path)
         else:
-            self._conn.storbinary(f"STOR {remote_path}", buf)
+            import time
+            for attempt in range(1, retries + 1):
+                try:
+                    buf = io.BytesIO(data)
+                    self._conn.storbinary(f"STOR {remote_path}", buf)
+                    break
+                except (ConnectionRefusedError, OSError) as e:
+                    print(f"[FTP DEBUG] upload_bytes() attempt {attempt}/{retries} failed: {e}")
+                    if attempt == retries:
+                        raise
+                    time.sleep(2)
         print(f"[FTP DEBUG] upload_bytes() done: {len(data)} bytes -> {remote_path}")
 
     def upload_df(self, df: pd.DataFrame, remote_path: str, sep: str = ",") -> None:
@@ -149,14 +172,24 @@ class FTPConn:
                 self._conn.retrbinary(f"RETR {remote_path}", f.write)
         print(f"[FTP DEBUG] download() done: {remote_path} -> {local_path}")
 
-    def download_bytes(self, remote_path: str) -> bytes:
+    def download_bytes(self, remote_path: str, retries: int = 3) -> bytes:
         """Download a remote file as bytes."""
         print(f"[FTP DEBUG] download_bytes() remote={remote_path}")
         buf = io.BytesIO()
         if self.protocol == "sftp":
             self._conn.getfo(remote_path, buf)
         else:
-            self._conn.retrbinary(f"RETR {remote_path}", buf.write)
+            import time
+            for attempt in range(1, retries + 1):
+                try:
+                    buf = io.BytesIO()
+                    self._conn.retrbinary(f"RETR {remote_path}", buf.write)
+                    break
+                except (ConnectionRefusedError, OSError) as e:
+                    print(f"[FTP DEBUG] download_bytes() attempt {attempt}/{retries} failed: {e}")
+                    if attempt == retries:
+                        raise
+                    time.sleep(2)
         data = buf.getvalue()
         print(f"[FTP DEBUG] download_bytes() done: {len(data)} bytes from {remote_path}")
         return data
@@ -199,7 +232,16 @@ class FTPConn:
         if self.protocol == "sftp":
             files = self._conn.listdir(remote_path)
         else:
-            files = self._conn.nlst(remote_path)
+            import time
+            for attempt in range(1, 4):
+                try:
+                    files = self._conn.nlst(remote_path)
+                    break
+                except (ConnectionRefusedError, OSError) as e:
+                    print(f"[FTP DEBUG] list() attempt {attempt}/3 failed: {e}")
+                    if attempt == 3:
+                        raise
+                    time.sleep(2)
         print(f"[FTP DEBUG] list() found {len(files)} items: {files}")
         return files
 
