@@ -70,6 +70,18 @@ CONNECTIONS = [
         port=3306,
         schema="fidfarma",
     ),
+    # ── Zoho CRM (OAuth2) ──
+    # login = client_id, password = client_secret, extra.refresh_token = refresh token
+    Connection(
+        conn_id="zoho_crm",
+        conn_type="generic",
+        login="1000.TB4P58146F209UUX572QQK5DGD2G6V",
+        password="813e36e342c089dbc89cf14b42e1f1e61c50df47d6",
+        extra=json.dumps({
+            "refresh_token": "1000.a969c1c21564d6fdf99ddb1ea08fd395.ef9c552deb5ab38ce55d45224117493e",
+            "redirect_uri": "https://www.ecoceutics.com/wp-json/bitgfzc/redirect",
+        }),
+    ),
 ]
 
 

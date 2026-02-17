@@ -21,7 +21,7 @@ definitions:
       --exclude='.git/'
       --exclude='.env'
       --exclude='secrets/'
-      --exclude='__pycache__/'
+      --exclude='__pycache__/'+
       --exclude='*.pyc'
       --exclude='output/'
       --exclude='data/'
