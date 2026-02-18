@@ -4,8 +4,8 @@ pipelines:
   branches:
     main:
       - step:
-          name: Call remote hook (Deploy to TEST)
-          deployment: Test
+          name: Call remote hook (Deploy to Production)
+          deployment: Production
           script:
             - chmod +x ./scripts/call_remote_hook_deploy.sh
             - ./scripts/call_remote_hook_deploy.sh --url "$HOOK_DEPLOY_URL" --hook "$HOOK_DEPLOY_NAME" --secret "$HOOK_DEPLOY_SECRET"
