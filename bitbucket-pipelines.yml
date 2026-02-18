@@ -1,0 +1,13 @@
+image: atlassian/default-image:3
+
+pipelines:
+  branches:
+    main:
+      - step:
+          name: Call remote hook (Deploy to TEST)
+          deployment: Test
+          script:
+            - chmod +x ./scripts/call_remote_hook_deploy.sh
+            - ./scripts/call_remote_hook_deploy.sh --url "$HOOK_DEPLOY_URL" --hook "$HOOK_DEPLOY_NAME" --secret "$HOOK_DEPLOY_SECRET"
+
+
