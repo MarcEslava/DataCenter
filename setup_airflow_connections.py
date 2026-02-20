@@ -1,17 +1,35 @@
 """
-Setup Airflow connections and variables for EcoVital ETL.
+Setup Airflow connections and variables from .env file.
 
 Run inside the Airflow container:
-  docker compose exec apiserver python /opt/airflow/dags/setup_airflow_connections.py
+  docker compose exec apiserver python /opt/airflow/setup_airflow_connections.py
 
-Uses Airflow's Connection model so passwords are Fernet-encrypted automatically.
+Reads credentials from .env (mounted read-only) so nothing is hardcoded.
+Passwords are Fernet-encrypted automatically when stored in the DB.
 """
+import os
 import json
+from pathlib import Path
 from airflow.models.connection import Connection
 from airflow.models import Variable
 from airflow.settings import Session
 
+# Load .env file into os.environ
+_env_file = Path("/opt/airflow/.env")
+if _env_file.exists():
+    for line in _env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, _, value = line.partition("=")
+        if key and value:
+            os.environ.setdefault(key.strip(), value.strip())
+
 session = Session()
+
+
+def env(key, default=""):
+    return os.environ.get(key, default)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -19,67 +37,78 @@ session = Session()
 # ─────────────────────────────────────────────────────────────
 
 CONNECTIONS = [
-    # ── FTP: Alloga ──
     Connection(
         conn_id="alloga_ftp",
         conn_type="ftp",
-        host="ftp.ecoceutics.com",
-        login="alloga",
-        password="Vx2019Alloga",
-        port=735,
+        host=env("ALLOGA_FTP_HOST"),
+        login=env("ALLOGA_FTP_LOGIN"),
+        password=env("ALLOGA_FTP_PASSWORD"),
+        port=int(env("ALLOGA_FTP_PORT", "21")),
         extra=json.dumps({"protocol": "ftp"}),
     ),
-    # ── HTTP: LogiCommerce API ──
     Connection(
         conn_id="logicommerce_api",
         conn_type="http",
-        host="https://api.logicommerce.net/v1",
+        host=env("LOGICOMMERCE_HOST"),
         extra=json.dumps({
-            "app_id": "pK3c76MsxY",
-            "secret": "pK3c76MsxY73eS9F2ke9gAvfBb2x84",
+            "app_id": env("LOGICOMMERCE_APP_ID"),
+            "secret": env("LOGICOMMERCE_SECRET"),
         }),
     ),
-    # ── HTTP: Ecoceutics FID API ──
     Connection(
         conn_id="ecoceutics_api",
         conn_type="http",
-        host="https://apifidfarma.ecoceutics.com/v1",
+        host=env("ECOCEUTICS_HOST"),
         extra=json.dumps({
-            "api_key": "657A8288P7156",
+            "api_key": env("ECOCEUTICS_API_KEY"),
         }),
     ),
-    # ── SSH: EcoVital DB Tunnel ──
     Connection(
         conn_id="ecovital_ssh",
         conn_type="ssh",
-        host="cecobd1.ecoceutics.com",
-        login="U4NsrvTwqF",
+        host=env("ECOVITAL_SSH_HOST"),
+        login=env("ECOVITAL_SSH_LOGIN"),
         password="",
-        port=12984,
+        port=int(env("ECOVITAL_SSH_PORT", "22")),
         extra=json.dumps({
-            "key_file": "/root/.ssh/id_ed25519",
+            "key_file": env("ECOVITAL_SSH_KEY_FILE"),
         }),
     ),
-    # ── MySQL: fidfarma (accessed via SSH tunnel) ──
     Connection(
         conn_id="ecovital_db",
         conn_type="mysql",
-        host="127.0.0.1",
-        login="wED2iQTl",
-        password="BS0jIbTe",
-        port=3306,
-        schema="fidfarma",
+        host=env("ECOVITAL_DB_HOST"),
+        login=env("ECOVITAL_DB_LOGIN"),
+        password=env("ECOVITAL_DB_PASSWORD"),
+        port=int(env("ECOVITAL_DB_PORT", "3306")),
+        schema=env("ECOVITAL_DB_SCHEMA"),
     ),
-    # ── Zoho CRM (OAuth2) ──
-    # login = client_id, password = client_secret, extra.refresh_token = refresh token
+    Connection(
+        conn_id="novedades_acords_db",
+        conn_type="mssql",
+        host=env("NOVEDADES_ACORDS_DB_HOST"),
+        login=env("NOVEDADES_ACORDS_DB_LOGIN"),
+        password=env("NOVEDADES_ACORDS_DB_PASSWORD"),
+        port=int(env("NOVEDADES_ACORDS_DB_PORT", "1433")),
+        schema=env("NOVEDADES_ACORDS_DB_SCHEMA"),
+    ),
+    Connection(
+        conn_id="novedades_products_db",
+        conn_type="mssql",
+        host=env("NOVEDADES_PRODUCTS_DB_HOST"),
+        login=env("NOVEDADES_PRODUCTS_DB_LOGIN"),
+        password=env("NOVEDADES_PRODUCTS_DB_PASSWORD"),
+        port=int(env("NOVEDADES_PRODUCTS_DB_PORT", "1433")),
+        schema=env("NOVEDADES_PRODUCTS_DB_SCHEMA"),
+    ),
     Connection(
         conn_id="zoho_crm",
         conn_type="generic",
-        login="1000.TB4P58146F209UUX572QQK5DGD2G6V",
-        password="813e36e342c089dbc89cf14b42e1f1e61c50df47d6",
+        login=env("ZOHO_CLIENT_ID"),
+        password=env("ZOHO_CLIENT_SECRET"),
         extra=json.dumps({
-            "refresh_token": "1000.a969c1c21564d6fdf99ddb1ea08fd395.ef9c552deb5ab38ce55d45224117493e",
-            "redirect_uri": "https://www.ecoceutics.com/wp-json/bitgfzc/redirect",
+            "refresh_token": env("ZOHO_REFRESH_TOKEN"),
+            "redirect_uri": env("ZOHO_REDIRECT_URI"),
         }),
     ),
 ]
@@ -90,10 +119,10 @@ CONNECTIONS = [
 # ─────────────────────────────────────────────────────────────
 
 VARIABLES = {
-    "ecovital_output_path": "/opt/airflow/dags/output/EcoVital_FactTable.csv",
-    "ecovital_ftp_remote_path": "fichero/EcoVital_FactTable.csv",
-    "ecovital_api_rate_limit": "0.3",
-    "ecovital_tax_mapping": json.dumps({"1": 21, "2": 10, "3": 4}),
+    "ecovital_output_path": env("ECOVITAL_OUTPUT_PATH", "/opt/airflow/dags/output/EcoVital_FactTable.csv"),
+    "ecovital_ftp_remote_path": env("ECOVITAL_FTP_REMOTE_PATH", "fichero/EcoVital_FactTable.csv"),
+    "ecovital_api_rate_limit": env("ECOVITAL_API_RATE_LIMIT", "0.3"),
+    "ecovital_tax_mapping": env("ECOVITAL_TAX_MAPPING", '{"1": 21, "2": 10, "3": 4}'),
 }
 
 
@@ -121,7 +150,7 @@ def upsert_connections():
 def upsert_variables():
     for key, value in VARIABLES.items():
         Variable.set(key, value)
-        print(f"  [set] {key} = {value}")
+        print(f"  [set] {key}")
 
 
 if __name__ == "__main__":
@@ -131,4 +160,3 @@ if __name__ == "__main__":
     upsert_variables()
     print("\nDone. All connections and variables are ready.")
     session.close()
-

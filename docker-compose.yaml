@@ -22,6 +22,7 @@ x-airflow-common: &airflow-common
   <<: *common
   image: apache/airflow:3.0.1
   environment: &airflow-common-env
+    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-microsoft-mssql pymssql"
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:-this_is_a_very_secured_key_change_in_production}
@@ -35,6 +36,8 @@ x-airflow-common: &airflow-common
     FORWARDED_ALLOW_IPS: "*"
   volumes:
     - ./dags:/opt/airflow/dags
+    - ./setup_airflow_connections.py:/opt/airflow/setup_airflow_connections.py:ro
+    - ./.env:/opt/airflow/.env:ro
   depends_on:
     - postgres
 
@@ -205,6 +208,8 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./conf/airflow.cfg:/airflow.cfg
+      - ./setup_airflow_connections.py:/opt/airflow/setup_airflow_connections.py:ro
+      - ./.env:/opt/airflow/.env:ro
     ports: ["8080:8080"]
   reverse-proxy:
     image: httpd:2.4-alpine

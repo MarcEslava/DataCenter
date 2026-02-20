@@ -59,6 +59,71 @@ class ZohoTokenManager:
         return data['access_token']
 
 
+class ZohoMailer:
+    """Send emails via Zoho Mail API.
+
+    Requires OAuth scope: ZohoMail.messages.CREATE
+    Docs: https://www.zoho.com/mail/help/api/post-send-an-email.html
+    """
+
+    # EU domain — change to mail.zoho.com for non-EU accounts
+    BASE_URL = "https://mail.zoho.eu/api/accounts"
+
+    def __init__(self, access_token: str, account_id: str):
+        self.account_id = account_id
+        self.headers = {
+            "Authorization": f"Zoho-oauthtoken {access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+    def send(
+        self,
+        from_address: str,
+        to_address: Union[str, List[str]],
+        subject: str,
+        content: str,
+        cc: Union[str, List[str], None] = None,
+        bcc: Union[str, List[str], None] = None,
+        mail_format: str = "html",
+        ask_receipt: bool = False,
+    ) -> Dict:
+        """Send an email and return the API response."""
+        if isinstance(to_address, list):
+            to_address = ",".join(to_address)
+        if isinstance(cc, list):
+            cc = ",".join(cc)
+        if isinstance(bcc, list):
+            bcc = ",".join(bcc)
+
+        url = f"{self.BASE_URL}/{self.account_id}/messages"
+        payload = {
+            "fromAddress": from_address,
+            "toAddress": to_address,
+            "subject": subject,
+            "content": content,
+            "mailFormat": mail_format,
+            "askReceipt": "yes" if ask_receipt else "no",
+        }
+        if cc:
+            payload["ccAddress"] = cc
+        if bcc:
+            payload["bccAddress"] = bcc
+
+        response = requests.post(url, headers=self.headers, json=payload)
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            error_msg = f"Zoho Mail send failed: {e}"
+            try:
+                error_msg += f"\nDetails: {json.dumps(response.json(), indent=2)}"
+            except Exception:
+                error_msg += f"\nResponse: {response.text}"
+            raise Exception(error_msg)
+
+        return response.json()
+
+
 class ZohoCRMConnector:
     """Handles Zoho CRM API interactions"""
     
