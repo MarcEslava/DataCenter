@@ -12,6 +12,7 @@ x-deploy-small: &deploy-small
   resources:
     limits: { cpus: '1', memory: 1G }
     reservations: { cpus: '0.25', memory: 512M }
+    
 
 x-deploy-medium: &deploy-medium
   resources:
