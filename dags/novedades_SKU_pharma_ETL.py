@@ -27,7 +27,7 @@ CLIENT_KEY = "Vendor_Name"  # field in Zoho vendor data that holds client name
 # ─────────────────────────────────────────────────────────────
 # DAG
 # ─────────────────────────────────────────────────────────────
-
+#   test rama funcionar
 @dag(
     dag_id='novedades_SKU_pharma_ETL',
     description='ETL for Pharma SKU updates from Zoho — parallel per client',
