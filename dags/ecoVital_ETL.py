@@ -33,10 +33,10 @@ ECOCEUTICS_API_BASE = "https://apifidfarma.ecoceutics.com/v1"
 ECOCEUTICS_API_KEY = "657A8288P7156"
 
 API_RATE_LIMIT_DELAY = 0.3
-OUTPUT_PATH = "/opt/airflow/dags/output/EcoVital_FactTable.csv"
 
-FTP_CONN_ID = "alloga_ftp"
-FTP_REMOTE_PATH = "fichero/EcoVital_FactTable.csv"
+FTP_CONN_ID = "aqua_ftp"
+# FTP_REMOTE_PATH = "RecibidosB2B/"
+FTP_REMOTE_PATH = "tests/"
 
 SSH_HOST = "cecobd1.ecoceutics.com"
 SSH_USER = "U4NsrvTwqF"
@@ -195,33 +195,61 @@ def fetch_ecoceutics_fid(nif: str) -> dict:
 # ─────────────────────────────────────────────────────────────
 
 def make_tunnel():
-    key_content = open(SSH_KEY).read() if SSH_KEY else None
-    return SSHTunnel(
-        ssh_host=SSH_HOST, ssh_port=SSH_PORT, ssh_username=SSH_USER,
-        ssh_password=SSH_PASSWORD or None, ssh_private_key=key_content,
-        remote_host=DB_HOST, remote_port=DB_PORT,
-    )
+    try:
+        key_content = open(SSH_KEY).read() if SSH_KEY else None
+        return SSHTunnel(
+            ssh_host=SSH_HOST, ssh_port=SSH_PORT, ssh_username=SSH_USER,
+            ssh_password=SSH_PASSWORD or None, ssh_private_key=key_content,
+            remote_host=DB_HOST, remote_port=DB_PORT,
+        )
+    except Exception as e:
+        print(f"SSH Tunnel error: {e}")
+        return None
 
 
 def make_db(tunnel):
-    return SQLConnection(
-        db_host=DB_HOST, db_port=DB_PORT, db_database=DB_NAME,
-        db_username=DB_USER, db_password=DB_PASSWORD,
-        dialect="mysql", driver="pymysql",
-        ssh_tunnel=tunnel,
-    )
+    try:
+        if tunnel is None:
+            return SQLConnection(
+                db_host=DB_HOST, db_port=DB_PORT, db_database=DB_NAME,
+                db_username=DB_USER, db_password=DB_PASSWORD,
+                dialect="mysql", driver="pymysql",
+            )
+        else:
+            return SQLConnection(
+                db_host=DB_HOST, db_port=DB_PORT, db_database=DB_NAME,
+                db_username=DB_USER, db_password=DB_PASSWORD,
+                dialect="mysql", driver="pymysql",
+                ssh_tunnel=tunnel,
+            )
+    except Exception as e:
+        print(f"DB connection error: {e}")
+        return None
 
 
 def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
-    if not nif_list:
-        return pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
-    with make_tunnel() as tunnel, make_db(tunnel) as db:
-        df = db.get_table_info(
-            table_name='Unit',
-            cols='id, nif, id_unit_izaro',
-            where=f"nif IN ({', '.join(repr(n) for n in nif_list)})",
-        )
-        return df if not df.empty else pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
+    try:
+        if not nif_list:
+            return pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
+        
+        if make_tunnel() is None:
+            with make_db(None) as db:
+                df = db.get_table_info(
+                    table_name='Unit',
+                    cols='id, nif, id_unit_izaro',
+                    where=f"nif IN ({', '.join(repr(n) for n in nif_list)})",
+                )
+        else:
+            with make_tunnel() as tunnel, make_db(tunnel) as db:
+                df = db.get_table_info(
+                    table_name='Unit',
+                    cols='id, nif, id_unit_izaro',
+                    where=f"nif IN ({', '.join(repr(n) for n in nif_list)})",
+                )
+            return df if not df.empty else pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
+    except Exception as e:
+        print(f"DB query error: {e}")
+        return None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -408,10 +436,12 @@ def task_alliance_clients(**context):
     nif_list = extract_unique_nifs(pedidos_df)
     print(f"Querying Unit table for {len(nif_list)} NIFs...")
     units_df = query_units_by_nifs(nif_list)
-    print(f"Found {len(units_df)} matches")
-    if units_df.empty:
+    if units_df is None:
+        print("No matching units found")
         return []
-    return units_df[['nif', 'id_unit_izaro']].to_dict('records')
+    else:
+        print(f"Found {units_df.shape} matches")
+        return units_df[['nif', 'id_unit_izaro']].to_dict('records')
 
 
 def task_load_fact_table(**context):
@@ -427,8 +457,11 @@ def task_load_fact_table(**context):
         return None
 
     pedidos_df = pd.DataFrame(pedidos)
+    print(f"Orders DataFrame: {pedidos_df.head(2)}")
     billing_df = pd.DataFrame(billing_data) if billing_data else pd.DataFrame()
+    print(f"Billing DataFrame: {billing_df.head(2)}")
     nif_df = extract_fid_from_response(nif_data) if nif_data else pd.DataFrame(columns=['id', 'nif'])
+    print(f"NIF DataFrame: {nif_df.head(2)}")
     alliance_df = pd.DataFrame(alliance_data) if alliance_data else pd.DataFrame(columns=['nif', 'id_unit_izaro'])
 
     df = merge_orders_with_nif(pedidos_df, nif_df)
@@ -442,24 +475,34 @@ def task_load_fact_table(**context):
         df = df.drop(columns=['nif'], errors='ignore')
 
     df = apply_final_column_mapping(df)
-
-    import os
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    df.to_csv(OUTPUT_PATH, index=False)
-    print(f"Saved {len(df)} rows to {OUTPUT_PATH}")
-    return OUTPUT_PATH
+    print(f"Fact table ready: {len(df)} rows")
+    return df.to_dict('records')
 
 
 def task_upload_to_ftp(**context):
-    output_path = context['task_instance'].xcom_pull(task_ids='load_fact_table')
-    if not output_path:
-        print("No file to upload")
+    records = context['task_instance'].xcom_pull(task_ids='load_fact_table')
+    if not records:
+        print("No data to upload")
         return
+    df = pd.DataFrame(records)
     with FTPConn.from_airflow(FTP_CONN_ID) as ftp:
-        ftp.upload(output_path, FTP_REMOTE_PATH)
-    print(f"Uploaded {output_path} to FTP: {FTP_REMOTE_PATH}")
+        for pedido in df['Pedido'].unique():
+            df_pedido = df[df['Pedido'] == pedido]
+            remote_file = f"{FTP_REMOTE_PATH}Pedido_AP_{pedido}.csv"
+            ftp.upload_df(df_pedido, remote_file, sep=";")
+    print(f"Uploaded {len(df)} rows to FTP")
 
-
+def task_cleanup(**context):
+    try:
+        with FTPConn.from_airflow(FTP_CONN_ID) as ftp:
+            files = ftp.list_files(FTP_REMOTE_PATH)
+            for file in files:
+                if file.startswith(f"{FTP_REMOTE_PATH}Pedido_AP_"):
+                    ftp.delete_file(file)
+            print("Cleanup task completed")
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+        
 # ─────────────────────────────────────────────────────────────
 # Task Definitions
 # ─────────────────────────────────────────────────────────────
@@ -524,6 +567,12 @@ upload_ftp_task = PythonOperator(
     dag=dag,
 )
 
+cleanup_task = PythonOperator(
+    task_id='cleanup_ftp',
+    python_callable=task_cleanup,
+    dag=dag,
+)
+
 # ─────────────────────────────────────────────────────────────
 # Task Dependencies
 # ─────────────────────────────────────────────────────────────
@@ -539,4 +588,4 @@ extract_orders_task >> transform_orders_task >> extract_order_details_task >> ex
 extract_users_task >> transform_users_task
 extract_order_details_task >> alliance_clients_task
 
-[extract_nif_task, transform_users_task, alliance_clients_task] >> load_task >> upload_ftp_task
+[extract_nif_task, transform_users_task, alliance_clients_task] >> load_task >> cleanup_task >> upload_ftp_task
