@@ -203,7 +203,7 @@ def make_tunnel():
         )
     except Exception as e:
         print(f"SSH Tunnel error: {e}")
-        raise
+        return None
 
 
 def make_db(tunnel):
@@ -221,7 +221,7 @@ def make_db(tunnel):
         )
     except Exception as e:
         print(f"DB connection error: {e}")
-        raise
+        return None
 
 
 def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
@@ -230,7 +230,7 @@ def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
             return pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
         
         if make_tunnel() is None:
-            with make_db(None) as db:
+            with make_db(tunnel=None) as db:
                 df = db.get_table_info(
                     table_name='Unit',
                     cols='id, nif, id_unit_izaro',
