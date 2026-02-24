@@ -114,7 +114,7 @@ def parse_json_cell(value) -> dict | list | None:
         try:
             return ast.literal_eval(str(value))
         except Exception:
-            return None
+            raise
 
 
 def normalize_billing_item(item) -> dict:
@@ -203,7 +203,7 @@ def make_tunnel():
         )
     except Exception as e:
         print(f"SSH Tunnel error: {e}")
-        return None
+        raise
 
 
 def make_db(tunnel):
@@ -221,7 +221,7 @@ def make_db(tunnel):
         )
     except Exception as e:
         print(f"DB connection error: {e}")
-        return None
+        raise
 
 
 def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
@@ -246,7 +246,7 @@ def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
             return df if not df.empty else pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
     except Exception as e:
         print(f"DB query error: {e}")
-        return None
+        raise
 
 
 # ─────────────────────────────────────────────────────────────
@@ -499,6 +499,7 @@ def task_cleanup(**context):
             print("Cleanup task completed")
     except Exception as e:
         print(f"Error during cleanup: {e}")
+        raise
         
 # ─────────────────────────────────────────────────────────────
 # Task Definitions
