@@ -35,19 +35,10 @@ ECOCEUTICS_API_KEY = "657A8288P7156"
 API_RATE_LIMIT_DELAY = 0.3
 
 FTP_CONN_ID = "aqua_ftp"
-# FTP_REMOTE_PATH = "RecibidosB2B/"
 FTP_REMOTE_PATH = "tests/"
 
-SSH_HOST = "cecobd1.ecoceutics.com"
-SSH_USER = "U4NsrvTwqF"
-SSH_PASSWORD = ""
-SSH_PORT = 12984
-SSH_KEY = "/root/.ssh/id_ed25519"
-DB_HOST = "127.0.0.1"
-DB_PORT = 3306
-DB_USER = "wED2iQTl"
-DB_PASSWORD = "BS0jIbTe"
-DB_NAME = "fidfarma"
+SSH_CONN_ID = "fidfarma_ssh"
+DB_CONN_ID = "fidfarma_db"
 
 TAX_MAPPING = {
     "1": 21,
@@ -196,11 +187,19 @@ def fetch_ecoceutics_fid(nif: str) -> dict:
 
 def make_tunnel():
     try:
-        key_content = open(SSH_KEY).read() if SSH_KEY else None
+        from airflow.hooks.base import BaseHook
+        conn = BaseHook.get_connection(SSH_CONN_ID)
+        extra = conn.extra_dejson
+        key_file = extra.get('key_file')
+        key_content = open(key_file).read() if key_file else None
         return SSHTunnel(
-            ssh_host=SSH_HOST, ssh_port=SSH_PORT, ssh_username=SSH_USER,
-            ssh_password=SSH_PASSWORD or None, ssh_private_key=key_content,
-            remote_host=DB_HOST, remote_port=DB_PORT,
+            ssh_host=conn.host,
+            ssh_port=conn.port or 22,
+            ssh_username=conn.login,
+            ssh_password=conn.password or None,
+            ssh_private_key=key_content,
+            remote_host=extra.get('remote_host', '127.0.0.1'),
+            remote_port=int(extra.get('remote_port', 3306)),
         )
     except Exception as e:
         print(f"SSH Tunnel error: {e}")
@@ -209,19 +208,17 @@ def make_tunnel():
 
 def make_db(tunnel):
     try:
-        if tunnel is None:
-            return SQLConnection(
-                db_host=DB_HOST, db_port=DB_PORT, db_database=DB_NAME,
-                db_username=DB_USER, db_password=DB_PASSWORD,
-                dialect="mysql", driver="pymysql",
-            )
-        else:
-            return SQLConnection(
-                db_host=DB_HOST, db_port=DB_PORT, db_database=DB_NAME,
-                db_username=DB_USER, db_password=DB_PASSWORD,
-                dialect="mysql", driver="pymysql",
-                ssh_tunnel=tunnel,
-            )
+        from airflow.hooks.base import BaseHook
+        conn = BaseHook.get_connection(DB_CONN_ID)
+        return SQLConnection(
+            db_host=conn.host,
+            db_port=conn.port or 3306,
+            db_database=conn.schema,
+            db_username=conn.login,
+            db_password=conn.password,
+            dialect="mysql", driver="pymysql",
+            ssh_tunnel=tunnel,
+        )
     except Exception as e:
         print(f"DB connection error: {e}")
         return None
@@ -428,8 +425,8 @@ def task_alliance_clients(**context):
     if not pedidos:
         print("No orders to query")
         return []
-    if not SSH_HOST:
-        print("SKIP - SSH_HOST not configured")
+    if not SSH_CONN_ID:
+        print("SKIP - SSH_CONN_ID not configured")
         return []
 
     pedidos_df = pd.DataFrame(pedidos)
@@ -489,7 +486,7 @@ def task_upload_to_ftp(**context):
         for pedido in df['Pedido'].unique():
             df_pedido = df[df['Pedido'] == pedido]
             remote_file = f"{FTP_REMOTE_PATH}Pedido_AP_{pedido}.csv"
-            ftp.upload_df(df_pedido, remote_file, sep=";")
+            ftp.upload_df(df_pedido, remote_file, sep=";", sheet_name=f"Pedidos_AP_{pedido}")
     print(f"Uploaded {len(df)} rows to FTP")
 
 def task_cleanup(**context):
