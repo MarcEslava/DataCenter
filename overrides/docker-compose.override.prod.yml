@@ -1,0 +1,16 @@
+# =============================================================================
+# Production environment override
+# =============================================================================
+# Copy to /opt/ecopipeline/prod/docker-compose.override.yml
+#
+# .env must contain:
+#   COMPOSE_PROJECT_NAME=ecopipeline-prod
+#   (plus all other vars from the base .env with production values)
+# =============================================================================
+
+services:
+  # Prod uses the default ports from docker-compose.yaml.
+  # Only overrides that differ from base go here.
+
+  python-master:
+    container_name: python-testing-prod

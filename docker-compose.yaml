@@ -1,6 +1,3 @@
-# ─────────────────────────────────────────────────────────────
-# YAML Anchors - Reusable blocks to reduce redundancy
-# ─────────────────────────────────────────────────────────────
 
 x-common: &common
   restart: unless-stopped
@@ -15,6 +12,7 @@ x-deploy-small: &deploy-small
   resources:
     limits: { cpus: '1', memory: 1G }
     reservations: { cpus: '0.25', memory: 512M }
+    
 
 x-deploy-medium: &deploy-medium
   resources:
@@ -28,6 +26,10 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:-this_is_a_very_secured_key_change_in_production}
+    AIRFLOW__CORE__INTERNAL_API_SECRET_KEY: ${AIRFLOW_INTERNAL_API_SECRET_KEY:-NOmmb1RlQ6e+rFHGLPzgng==}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-OXdEIRar9V1kjsXKMv4v63_37n3uUsHHaOyvw0xtqLs=}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-tcDqV0CAB6yubbpSpxjdIA==}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:-jpI3a/LHtBgnJZ8KUx90zg==}
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__LOGGING__LOGGING_LEVEL: ERROR
     AIRFLOW__WEBSERVER__BASE_URL: http://datahub.local/airflow
@@ -90,7 +92,9 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,EXTERNAL://kafka.ecoceutics.com:9092
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/jaas.conf -Dzookeeper.sasl.client=true -Dzookeeper.sasl.client.username=kafka"
       CONFLUENT_CRUISE_CONTROL_ENABLE: "false"
-      KAFKA_LOG4J_ROOT_LOGLEVEL: ERROR
+      CONFLUENT_TELEMETRY_ENABLED: "false"
+      KAFKA_LOG4J_ROOT_LOGLEVEL: FATAL
+      KAFKA_LOG4J_LOGGERS: "kafka.coordinator.group=FATAL,kafka.server.ZkAdminManager=FATAL,kafka.controller=FATAL"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
     volumes:
@@ -140,6 +144,7 @@ services:
       CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_REPLICATION: 1
       CONTROL_CENTER_METRICS_TOPIC_REPLICATION: 1
       CONTROL_CENTER_LOG4J_ROOT_LOGLEVEL: ERROR
+      CONFLUENT_TELEMETRY_ENABLED: "false"
     deploy: *deploy-medium
   connect:
     <<: *common
@@ -213,9 +218,10 @@ services:
   scheduler:
     <<: *airflow-common
     command: bash -lc "exec airflow scheduler"
+    hostname: scheduler
     environment:
       <<: *airflow-common-env
-      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://apiserver:8080/execution/
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
     deploy: *deploy-medium
 
@@ -224,7 +230,7 @@ services:
     command: bash -lc "exec airflow dag-processor"
     environment:
       <<: *airflow-common-env
-      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://apiserver:8080/execution/
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
     deploy:
       resources:
@@ -268,17 +274,18 @@ services:
         reservations: { cpus: '0.5', memory: 512M }
   
   python-master:
-    image: python-master
-    build: .
-    working_dir: /work
+    image: python:3.11.2-slim
+    restart: unless-stopped
+    working_dir: /work/projects
     tty: true
     stdin_open: true
-    volumes:
-      - ./apps:/work/apps
-      - ./data:/work/data
-      - spark_checkpoint:/work/checkpoint
-      - ~/.ssh:/home/app/.ssh:ro
+    command: sleep infinity
     networks: [confluent]
+    environment:
+      GIT_SSH_COMMAND: "ssh -o StrictModes=no"
+    volumes:
+      - .:/work/projects
+      - ~/.ssh:/root/.ssh:ro
 
   mongo:
     <<: *common
