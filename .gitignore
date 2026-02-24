@@ -31,6 +31,8 @@ secrets/
 
 # test/  Output / cache
 tests/
+output/
+bitbucket-pipelines.yml
 
 # Airflow
 logs/
