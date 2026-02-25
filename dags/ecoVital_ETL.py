@@ -7,6 +7,7 @@ order analysis. Uploads result to FTP.
 """
 
 from airflow import DAG
+from airflow.models import Variable
 from airflow.providers.standard.operators.python import PythonOperator
 from datetime import datetime, timedelta
 import hashlib
@@ -25,26 +26,24 @@ from utils.clsSQL import SQLConnection
 # Configuration
 # ─────────────────────────────────────────────────────────────
 
-LOGICOMMERCE_API_BASE = "https://api.logicommerce.net/v1"
-LOGICOMMERCE_APP_ID = "pK3c76MsxY"
-LOGICOMMERCE_SECRET = "pK3c76MsxY73eS9F2ke9gAvfBb2x84"
+# Variables (to be set in Airflow UI or environment)
+LOGICOMMERCE_API_BASE = Variable.get("logicommerce_api_base")
+LOGICOMMERCE_APP_ID = Variable.get("logicommerce_app_id")
+LOGICOMMERCE_SECRET = Variable.get("logicommerce_secret")  
 
-ECOCEUTICS_API_BASE = "https://apifidfarma.ecoceutics.com/v1"
-ECOCEUTICS_API_KEY = "657A8288P7156"
+ECOCEUTICS_API_BASE = Variable.get("ecoceutics_api_base")
+ECOCEUTICS_API_KEY = Variable.get("ecoceutics_api_key")
 
 API_RATE_LIMIT_DELAY = 0.3
 
+# Connections
 FTP_CONN_ID = "aqua_ftp"
-FTP_REMOTE_PATH = "tests/"
+FTP_REMOTE_PATH = "ftp_remote_path"
 
 SSH_CONN_ID = "fidfarma_ssh"
 DB_CONN_ID = "fidfarma_db"
 
-TAX_MAPPING = {
-    "1": 21,
-    "2": 10,
-    "3": 4,
-}
+TAX_MAPPING = Variable.get("ecovital_tax_mapping", deserialize_json=True, default_var={})
 
 default_args = {
     'owner': 'data-team',
