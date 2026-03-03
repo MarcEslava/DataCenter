@@ -32,7 +32,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:-jpI3a/LHtBgnJZ8KUx90zg==}
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__LOGGING__LOGGING_LEVEL: ERROR
-    AIRFLOW__WEBSERVER__BASE_URL: http://datahub.local/airflow
+    AIRFLOW__WEBSERVER__BASE_URL: ${AIRFLOW_BASE_URL:-http://datahub.local/airflow}
     FORWARDED_ALLOW_IPS: "*"
   volumes:
     - ./dags:/opt/airflow/dags
@@ -246,8 +246,8 @@ services:
       SPARK_MASTER_HOST: spark-master
       SPARK_MASTER_PORT: 7077
       SPARK_MASTER_WEBUI_PORT: 8080
-      SPARK_MASTER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
-      SPARK_PUBLIC_DNS: datahub.local
+      SPARK_MASTER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.reverseProxyUrl=${SPARK_UI_REVERSE_PROXY_URL:-http://datahub.local/spark}"
+      SPARK_PUBLIC_DNS: ${SPARK_PUBLIC_DNS:-datahub.local}
       SPARK_NO_DAEMONIZE: "true"
       SPARK_LOG_LEVEL: ERROR
     ports: ["9090:8080", "7077:7077"]
@@ -264,7 +264,7 @@ services:
       SPARK_WORKER_CORES: 2
       SPARK_WORKER_MEMORY: 1g
       SPARK_MASTER_URL: spark://spark-master:7077
-      SPARK_WORKER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
+      SPARK_WORKER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.reverseProxyUrl=${SPARK_UI_REVERSE_PROXY_URL:-http://datahub.local/spark}"
       SPARK_WORKER_HOST: spark-worker
       SPARK_WORKER_WEBUI_PORT: 8081
       SPARK_LOG_LEVEL: ERROR
@@ -308,4 +308,3 @@ volumes:
 
 networks:
   confluent:
-
