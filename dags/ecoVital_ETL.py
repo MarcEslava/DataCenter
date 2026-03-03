@@ -482,7 +482,7 @@ def task_upload_to_ftp(**context):
     with FTPConn.from_airflow(FTP_CONN_ID) as ftp:
         for pedido in df['N Pedido'].unique():
             df_pedido = df[df['N Pedido'] == pedido]
-            remote_file = f"{FTP_REMOTE_PATH}Pedido_AP_{pedido}.csv"
+            remote_file = f"{FTP_REMOTE_PATH}Pedidos_AP_{pedido}.csv"
             ftp.upload_df(df_pedido, remote_file, sep=";", sheet_name=f"Pedidos_AP_{pedido}")
     print(f"Uploaded {len(df)} rows to FTP")
 
