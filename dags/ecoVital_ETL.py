@@ -38,7 +38,7 @@ API_RATE_LIMIT_DELAY = 0.3
 
 # Connections
 FTP_CONN_ID = "aqua_ftp"
-FTP_REMOTE_PATH = "ftp_remote_path"
+FTP_REMOTE_PATH = Variable.get("ftp_remote_path", default_var="/")
 
 SSH_CONN_ID = "fidfarma_ssh"
 DB_CONN_ID = "fidfarma_db"
@@ -227,22 +227,16 @@ def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
     try:
         if not nif_list:
             return pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
-        
-        if make_tunnel() is None:
-            with make_db(tunnel=None) as db:
-                df = db.get_table_info(
-                    table_name='Unit',
-                    cols='id, nif, id_unit_izaro',
-                    where=f"nif IN ({', '.join(repr(n) for n in nif_list)})",
-                )
-        else:
-            with make_tunnel() as tunnel, make_db(tunnel) as db:
-                df = db.get_table_info(
-                    table_name='Unit',
-                    cols='id, nif, id_unit_izaro',
-                    where=f"nif IN ({', '.join(repr(n) for n in nif_list)})",
-                )
-            return df if not df.empty else pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
+
+        where = f"nif IN ({', '.join(repr(n) for n in nif_list)})"
+        tunnel = make_tunnel()
+        with make_db(tunnel) as db:
+            df = db.get_table_info(
+                table_name='Unit',
+                cols='id, nif, id_unit_izaro',
+                where=where,
+            )
+        return df if not df.empty else pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
     except Exception as e:
         print(f"DB query error: {e}")
         raise
@@ -462,9 +456,12 @@ def task_load_fact_table(**context):
             left_on='NIF', right_on='nif', how='left'
         )
         df = df.drop(columns=['nif'], errors='ignore')
+    else:
+        df['Cliente Alliance'] = None
 
+    print(f"Columns before mapping: {list(df.columns)}")
     df = apply_final_column_mapping(df)
-    print(f"Fact table ready: {len(df)} rows")
+    print(f"Fact table ready: {len(df)} rows, columns: {list(df.columns)}")
     return df.to_dict('records')
 
 
