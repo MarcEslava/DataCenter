@@ -475,25 +475,86 @@ def task_upload_to_ftp(**context):
     records = context['task_instance'].xcom_pull(task_ids='load_fact_table')
     if not records:
         print("No data to upload")
-        return
+        return []
     df = pd.DataFrame(records)
     col_order = ["N Pedido", "Codigo Farmacia", "Codigo Producto", "Unidades", "Precio", "Descuento", "Fecha Pedido"]
     df = df[[c for c in col_order if c in df.columns]]
+
+    max_pedido = context['task_instance'].xcom_pull(task_ids='cleanup_ftp') or 0
+    df = df[df['N Pedido'].astype(int) > int(max_pedido)]
+    print(f"Uploading pedidos > {max_pedido}: {df['N Pedido'].nunique()} pedidos")
+    if df.empty:
+        print("No new pedidos to upload")
+        return []
+
+    uploaded = []
     with FTPConn.from_airflow(FTP_CONN_ID) as ftp:
         for pedido in df['N Pedido'].unique():
             df_pedido = df[df['N Pedido'] == pedido]
             remote_file = f"{FTP_REMOTE_PATH}Pedidos_AP_{pedido}.csv"
             ftp.upload_df(df_pedido, remote_file, sep=";", sheet_name=f"Pedidos_AP_{pedido}")
-    print(f"Uploaded {len(df)} rows to FTP")
+            uploaded.append(str(pedido))
+    print(f"Uploaded {len(df)} rows to FTP ({len(uploaded)} pedidos)")
+    return uploaded
+
+def notify_logicommerce_order_status(token: str, order_number: str, state: int = 2) -> None:
+    """Change a LogiCommerce order state via /orders/{orderNumber}/changeState.
+    state=2 → in_process
+    """
+    url = f"{LOGICOMMERCE_API_BASE}/orders/{order_number}/changeState"
+    headers = build_logicommerce_headers(token)
+    payload = {"changeState": {"state": state}}
+    response = requests.put(url, headers=headers, json=payload)
+    response.raise_for_status()
+    print(f"  Order {order_number} → state {state} (HTTP {response.status_code})")
+
+
+def task_notify_logicommerce(**context):
+    """Notify LogiCommerce that uploaded pedidos are now in_process."""
+    ti = context['task_instance']
+    uploaded = ti.xcom_pull(task_ids='upload_to_ftp') or []
+    if not uploaded:
+        print("No pedidos to notify")
+        return
+
+    token = ti.xcom_pull(task_ids='generate_token')
+    print(f"Notifying LogiCommerce for {len(uploaded)} pedidos: {uploaded}")
+    failed = []
+    for order_number in uploaded:
+        try:
+            # state=2 (in_process) is hardcoded — only state used in this pipeline for now
+            notify_logicommerce_order_status(token, order_number, state=2)
+            sleep(API_RATE_LIMIT_DELAY)
+        except requests.HTTPError as e:
+            print(f"  Order {order_number}: FAILED ({e.response.status_code} - {e.response.text})")
+            failed.append(order_number)
+
+    if failed:
+        raise RuntimeError(f"Failed to notify LogiCommerce for orders: {failed}")
+    print(f"All {len(uploaded)} pedidos marked as in_process")
+
 
 def task_cleanup(**context):
     try:
         with FTPConn.from_airflow(FTP_CONN_ID) as ftp:
             files = ftp.list(FTP_REMOTE_PATH)
-            for file in files:
-                if file.startswith(f"{FTP_REMOTE_PATH}Pedidos_AP_"):
-                    ftp.remove(file)
-            print("Cleanup task completed")
+            pedido_files = [f for f in files if f.rsplit('/', 1)[-1].startswith("Pedidos_AP_")]
+
+            max_pedido = 0
+            for file in pedido_files:
+                try:
+                    num = int(file.rsplit('/', 1)[-1].replace("Pedidos_AP_", "").replace(".csv", ""))
+                    if num > max_pedido:
+                        max_pedido = num
+                except ValueError:
+                    pass
+
+            print(f"Max pedido on FTP before cleanup: {max_pedido}")
+            for file in pedido_files:
+                ftp.remove(file)
+            print(f"Cleanup done, deleted {len(pedido_files)} files")
+
+        return max_pedido
     except Exception as e:
         print(f"Error during cleanup: {e}")
         raise
@@ -568,6 +629,12 @@ cleanup_task = PythonOperator(
     dag=dag,
 )
 
+change_state_logicommerce_task = PythonOperator(
+    task_id='change_state_logicommerce',
+    python_callable=task_notify_logicommerce,
+    dag=dag,
+)
+
 # ─────────────────────────────────────────────────────────────
 # Task Dependencies
 # ─────────────────────────────────────────────────────────────
@@ -583,4 +650,4 @@ extract_orders_task >> transform_orders_task >> extract_order_details_task >> ex
 extract_users_task >> transform_users_task
 extract_order_details_task >> alliance_clients_task
 
-[extract_nif_task, transform_users_task, alliance_clients_task] >> load_task >> cleanup_task >> upload_ftp_task
+[extract_nif_task, transform_users_task, alliance_clients_task] >> load_task >> cleanup_task >> upload_ftp_task >> change_state_logicommerce_task
