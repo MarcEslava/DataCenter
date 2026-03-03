@@ -491,7 +491,7 @@ def task_cleanup(**context):
         with FTPConn.from_airflow(FTP_CONN_ID) as ftp:
             files = ftp.list(FTP_REMOTE_PATH)
             for file in files:
-                if file.startswith(f"{FTP_REMOTE_PATH}Pedido_AP_"):
+                if file.startswith(f"{FTP_REMOTE_PATH}Pedidos_AP_"):
                     ftp.remove(file)
             print("Cleanup task completed")
     except Exception as e:
