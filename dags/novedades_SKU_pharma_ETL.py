@@ -8,20 +8,66 @@ Runs the full pipeline IN PARALLEL for each client (L'Oreal, Haleon, Almirall, e
 Uses Airflow dynamic task mapping: extract_vendors produces a list of clients,
 and process_client.expand() fans out one parallel branch per client.
 """
-
 from airflow.decorators import dag, task, task_group
 from datetime import datetime, timedelta
+from airflow.models import Variable
 
 # ─────────────────────────────────────────────────────────────
 # Configuration (from Airflow connections)
 # ─────────────────────────────────────────────────────────────
 
 ZOHO_CONN_ID = "zoho_crm"
-SQL_ACORDS_CONN_ID = "BIOps_db"     # SQL connection 1
-SQL_PRODUCTS_CONN_ID = "BIFarma_db"  # SQL connection 2
+SQL_ACORDS_CONN_ID = "biOps_db"      # SQL connection 1 (acordsEcos)
+SQL_PRODUCTS_CONN_ID = "BIFarma_db"  # SQL connection 2 (products/sales)
+SSH_CONN_ID = "ecovital_ssh"            # SSH tunnel (optional — falls back to direct if unavailable)
 
-# TODO: Adjust this to match the Zoho field that identifies the client/lab
-CLIENT_KEY = "Vendor_Name"  # field in Zoho vendor data that holds client name
+# ─────────────────────────────────────────────────────────────
+# SSH / DB helpers
+# ─────────────────────────────────────────────────────────────
+
+def _make_tunnel():
+    from airflow.hooks.base import BaseHook
+    from utils.clsSSHTunnel import SSHTunnel
+    conn = BaseHook.get_connection(SSH_CONN_ID)
+    extra = conn.extra_dejson
+    key_file = extra.get("key_file")
+    key_content = open(key_file).read() if key_file else None
+    return SSHTunnel(
+        ssh_host=conn.host,
+        ssh_port=conn.port or 22,
+        ssh_username=conn.login,
+        ssh_password=conn.password or None,
+        ssh_private_key=key_content,
+        remote_host=extra.get("remote_host", "127.0.0.1"),
+        remote_port=int(extra.get("remote_port", 1433)),
+    )
+
+
+def _make_mssql_db(conn_id: str, tunnel=None):
+    from airflow.hooks.base import BaseHook
+    from utils.clsSQL import SQLConnection
+    conn = BaseHook.get_connection(conn_id)
+    return SQLConnection(
+        db_host=conn.host,
+        db_port=conn.port or 1433,
+        db_database=conn.schema,
+        db_username=conn.login,
+        db_password=conn.password,
+        dialect="mssql",
+        driver="pymssql",
+        ssh_tunnel=tunnel,
+    )
+
+
+def _query_mssql(conn_id: str, sql: str):
+    """Run a SQL query with SSH tunnel, falling back to direct connection."""
+    try:
+        tunnel = _make_tunnel()
+    except Exception as e:
+        print(f"SSH tunnel unavailable, trying direct connection: {e}")
+        tunnel = None
+    with _make_mssql_db(conn_id, tunnel) as db:
+        return db.fech_dataframe(sql)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -31,14 +77,14 @@ CLIENT_KEY = "Vendor_Name"  # field in Zoho vendor data that holds client name
 @dag(
     dag_id='novedades_SKU_pharma_ETL',
     description='ETL for Pharma SKU updates from Zoho per client',
-    schedule='@daily',
+    schedule= Variable.get("novedades_sku_pharma_schedule", default_var="0 2 * * *"),  # default: daily at 2am
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_tasks=3,  # limit parallelism to avoid overloading sources
     default_args={
         'owner': 'data-team',
         'retries': 0,
-        'retry_delay': timedelta(minutes=5),
+        'retry_delay': timedelta(minutes=1),
     },
 )
 def novedades_sku_pharma_etl():
@@ -67,14 +113,12 @@ def novedades_sku_pharma_etl():
                 break
             page += 1
             sleep(0.3)
-
-        print(f"Extracted {len(all_vendors)} vendors from Zoho")
-
         grouped = {}
+        
         for v in all_vendors:
-            client = v.get(CLIENT_KEY, 'unknown')
-            grouped.setdefault(client, []).append(v)
-
+            if v.get("Tipo_Acuerdo") == "Obligatorio" or v.get("Tipo_Acuerdo") == "Opcional":
+                client_name = v.get("Client_Name", "Unknown Client")
+                grouped.setdefault(client_name, []).append(v)
         clients = [
             {"client_name": name, "vendors": vendors}
             for name, vendors in grouped.items()
@@ -87,7 +131,6 @@ def novedades_sku_pharma_etl():
     def extract_products() -> list[dict]:
         """Extract products/sales for current and previous year. Runs ONCE."""
         import pandas as pd
-        from airflow.providers.microsoft.mssql.hooks.mssql import MsSqlHook
         from utils.clsDate import DateHelper
         try:
             d = DateHelper()
@@ -127,34 +170,39 @@ def novedades_sku_pharma_etl():
 
             ECO_FILTER = "(T1.idendes IN (SELECT idendes FROM tme_delegaciones WHERE grupoCompras = 'ECO'))"
 
-            hook = MsSqlHook(mssql_conn_id=SQL_PRODUCTS_CONN_ID)
+            try:
+                tunnel = _make_tunnel()
+            except Exception as e:
+                print(f"SSH tunnel unavailable, trying direct connection: {e}")
+                tunnel = None
 
-            # ── Current year ──
-            act_df = hook.get_pandas_df(f"""
-                SELECT {BASE_COLS},
-                    MIN(pr.stockActual) AS Estoc,
-                    SUM(ISNULL(T1.cantidad, 0))       AS CantidadAct,
-                    SUM(ISNULL(T1.importe, 0))        AS ImporteAct,
-                    SUM(ISNULL(T1.cantidadcompra, 0)) AS CantidadCompraAct,
-                    SUM(ISNULL(T1.importecompra, 0))  AS ImporteCompraAct
-                {BASE_FROM}
-                WHERE T1.anyomes >= {curr_yy}01 AND T1.anyomes <= {curr_yy}12
-                    AND {ECO_FILTER}
-                    AND pr.codLab IN (SELECT idLab FROM BifarmaCentral.dbo.labAcuerdos WHERE anyo = {curr_year})
-                {GROUP_BY}""")
+            with _make_mssql_db(SQL_PRODUCTS_CONN_ID, tunnel) as db:
+                # ── Current year ──
+                act_df = db.fech_dataframe(f"""
+                    SELECT {BASE_COLS},
+                        MIN(pr.stockActual) AS Estoc,
+                        SUM(ISNULL(T1.cantidad, 0))       AS CantidadAct,
+                        SUM(ISNULL(T1.importe, 0))        AS ImporteAct,
+                        SUM(ISNULL(T1.cantidadcompra, 0)) AS CantidadCompraAct,
+                        SUM(ISNULL(T1.importecompra, 0))  AS ImporteCompraAct
+                    {BASE_FROM}
+                    WHERE T1.anyomes >= {curr_yy}01 AND T1.anyomes <= {curr_yy}12
+                        AND {ECO_FILTER}
+                        AND pr.codLab IN (SELECT idLab FROM BifarmaCentral.dbo.labAcuerdos WHERE anyo = {curr_year})
+                    {GROUP_BY}""")
 
-            # ── Previous year ──
-            ant_df = hook.get_pandas_df(f"""
-                SELECT {BASE_COLS},
-                    SUM(ISNULL(T1.cantidad, 0))       AS CantidadAnt,
-                    SUM(ISNULL(T1.importe, 0))        AS ImporteAnt,
-                    SUM(ISNULL(T1.cantidadcompra, 0)) AS CantidadCompraAnt,
-                    SUM(ISNULL(T1.importecompra, 0))  AS ImporteCompraAnt
-                {BASE_FROM}
-                WHERE T1.anyomes >= {prev_yy}01 AND T1.anyomes <= {prev_yy}12
-                    AND {ECO_FILTER}
-                    AND pr.codLab IN (SELECT idLab FROM BifarmaCentral.dbo.labAcuerdos WHERE anyo = {prev_year})
-                {GROUP_BY}""")
+                # ── Previous year ──
+                ant_df = db.fech_dataframe(f"""
+                    SELECT {BASE_COLS},
+                        SUM(ISNULL(T1.cantidad, 0))       AS CantidadAnt,
+                        SUM(ISNULL(T1.importe, 0))        AS ImporteAnt,
+                        SUM(ISNULL(T1.cantidadcompra, 0)) AS CantidadCompraAnt,
+                        SUM(ISNULL(T1.importecompra, 0))  AS ImporteCompraAnt
+                    {BASE_FROM}
+                    WHERE T1.anyomes >= {prev_yy}01 AND T1.anyomes <= {prev_yy}12
+                        AND {ECO_FILTER}
+                        AND pr.codLab IN (SELECT idLab FROM BifarmaCentral.dbo.labAcuerdos WHERE anyo = {prev_year})
+                    {GROUP_BY}""")
 
             # ── Merge current + previous ──
             MERGE_KEYS = [
@@ -177,26 +225,31 @@ def novedades_sku_pharma_etl():
             print(f"Error extracting products: {e}")
             raise e  # Re-raise to mark the run as failed in Airflow
 
-    # ── 3. Per-client pipeline (runs in parallel) ─────────────
+    # ── 3. Extract vendor/lab mapping table from BI (once for all clients) ──
+    @task
+    def extract_acords() -> list[dict]:
+        """Extract the vendor-to-lab mapping table from BI. Runs ONCE."""
+        df = _query_mssql(SQL_ACORDS_CONN_ID, "SELECT * FROM VendorMapping")
+        print(f"Extracted {len(df)} rows from VendorMapping")
+        return df.to_dict('records')
+
+    # ── 4. Per-client pipeline (runs in parallel) ─────────────
     @task_group(group_id="process_client")
-    def process_client(client_data: dict, all_products: list[dict]):
+    def process_client(client_data: dict, all_products: list[dict], all_acords: list[dict]):
         """Full ETL pipeline for a single client. Mapped dynamically."""
 
         @task
-        def map_acords(client_data: dict) -> dict:
-            
-            """Map client vendors with acordsEcos table."""
+        def map_acords(client_data: dict, all_acords: list[dict]) -> dict:
+            """Map client vendors against the acordsEcos table."""
             import pandas as pd
-            from airflow.providers.microsoft.mssql.hooks.mssql import MsSqlHook
 
             client_name = client_data["client_name"]
             vendors_df = pd.json_normalize(client_data["vendors"])
-
-            # TODO [DATA-46]: Adjust join key to match your schema
-            hook = MsSqlHook(mssql_conn_id=SQL_ACORDS_CONN_ID)
-            acords_df = hook.get_pandas_df("SELECT * FROM acordsEcos")
-
-            mapped = pd.merge(vendors_df, acords_df, on='key_column', how='inner')
+            acords_df = pd.DataFrame(all_acords)
+            vendors_df = vendors_df.rename(columns={'vendor_name': 'Laboratori'})
+            vendors_df['Laboratori'] = vendors_df['Laboratori'].str.strip().str.lower()
+            acords_df['Laboratori'] = acords_df['Laboratori'].str.strip().str.lower()
+            mapped = pd.merge(vendors_df, acords_df, on='Laboratori', how='inner')
             print(f"[{client_name}] Mapped {len(mapped)} vendors with acords")
             return {
                 "client_name": client_name,
@@ -295,7 +348,7 @@ def novedades_sku_pharma_etl():
             print(f"[{client_name}] Loaded {len(df)} rows to {output_path}")
 
         # Wire the per-client pipeline
-        mapped = map_acords(client_data)
+        mapped = map_acords(client_data, all_acords)
         filtered = filter_products(mapped, all_products)
         transformed = transform(filtered)
         load(transformed)
@@ -303,7 +356,8 @@ def novedades_sku_pharma_etl():
     # ── Wire it all together ──────────────────────────────────
     clients = extract_vendors()
     products = extract_products()
-    process_client.partial(all_products=products).expand(client_data=clients)
+    acords = extract_acords()
+    process_client.partial(all_products=products, all_acords=acords).expand(client_data=clients)
 
 
 # Instantiate the DAG
