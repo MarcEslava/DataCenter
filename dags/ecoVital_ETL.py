@@ -558,7 +558,35 @@ def task_cleanup(**context):
     except Exception as e:
         print(f"Error during cleanup: {e}")
         raise
-        
+
+def task_execute_bot(**context):
+    import requests
+    # curl --insecure --request POST --url https://ecoceutics-dev.bbos.services.aquabpi.com/api/instance/execute 
+    # --header 'Content-Type: application/json' 
+    # --data "{'InstanceId':'b71ccef7-959c-421d-b909-71180ae55172',
+    # 'SkillId':'f760bc8e-6c0f-4f49-acf3-2b3e2692d7e9',
+    # 'Password':'ecoceutics',
+    # 'Parameters':[{'Name':'Id','Type':0,'Value':'f5456bfc-f6b8-46e6-85c8-74dd59463a82'}],
+    # 'IsDebug':null,'DeveloperId':null}"
+    try:
+        response = requests.post(
+            "https://ecoceutics-dev.bbos.services.aquabpi.com/api/instance/execute",
+            json={
+                "InstanceId": "b71ccef7-959c-421d-b909-71180ae55172",
+                "SkillId":    "f760bc8e-6c0f-4f49-acf3-2b3e2692d7e9",
+                "Password":   "ecoceutics",
+                "Parameters": [{"Name": "Id", "Type": 0, "Value": "f5456bfc-f6b8-46e6-85c8-74dd59463a82"}],
+                "IsDebug":     None,
+                "DeveloperId": None,
+            },
+            verify=False,
+        )
+        response.raise_for_status()
+        print(f"Bot triggered: {response.status_code} {response.text}")    
+    except Exception as e:
+        print(f"Error executing bot: {e}")
+        raise           
+    
 # ─────────────────────────────────────────────────────────────
 # Task Definitions
 # ─────────────────────────────────────────────────────────────
@@ -635,6 +663,12 @@ change_state_logicommerce_task = PythonOperator(
     dag=dag,
 )
 
+execute_bot_task = PythonOperator(
+    task_id='execute_bot',
+    python_callable=task_execute_bot,
+    dag=dag,
+)
+
 # ─────────────────────────────────────────────────────────────
 # Task Dependencies
 # ─────────────────────────────────────────────────────────────
@@ -650,4 +684,4 @@ extract_orders_task >> transform_orders_task >> extract_order_details_task >> ex
 extract_users_task >> transform_users_task
 extract_order_details_task >> alliance_clients_task
 
-[extract_nif_task, transform_users_task, alliance_clients_task] >> load_task >> cleanup_task >> upload_ftp_task >> change_state_logicommerce_task
+[extract_nif_task, transform_users_task, alliance_clients_task] >> load_task >> cleanup_task >> upload_ftp_task >> execute_bot_task >> change_state_logicommerce_task
