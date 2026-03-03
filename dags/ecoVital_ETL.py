@@ -38,9 +38,9 @@ API_RATE_LIMIT_DELAY = 0.3
 
 # Connections
 FTP_CONN_ID = "aqua_ftp"
-FTP_REMOTE_PATH = "ftp_remote_path"
+FTP_REMOTE_PATH = Variable.get("ftp_remote_path", default_var="/")
 
-SSH_CONN_ID = "fidfarma_ssh"
+SSH_CONN_ID = "ssh_tunnel"
 DB_CONN_ID = "fidfarma_db"
 
 TAX_MAPPING = Variable.get("ecovital_tax_mapping", deserialize_json=True, default_var={})
@@ -202,7 +202,7 @@ def make_tunnel():
         )
     except Exception as e:
         print(f"SSH Tunnel error: {e}")
-        return None
+        raise
 
 
 def make_db(tunnel):
@@ -220,29 +220,27 @@ def make_db(tunnel):
         )
     except Exception as e:
         print(f"DB connection error: {e}")
-        return None
+        raise
 
 
 def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
     try:
         if not nif_list:
             return pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
-        
-        if make_tunnel() is None:
-            with make_db(tunnel=None) as db:
-                df = db.get_table_info(
-                    table_name='Unit',
-                    cols='id, nif, id_unit_izaro',
-                    where=f"nif IN ({', '.join(repr(n) for n in nif_list)})",
-                )
-        else:
-            with make_tunnel() as tunnel, make_db(tunnel) as db:
-                df = db.get_table_info(
-                    table_name='Unit',
-                    cols='id, nif, id_unit_izaro',
-                    where=f"nif IN ({', '.join(repr(n) for n in nif_list)})",
-                )
-            return df if not df.empty else pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
+
+        where = f"nif IN ({', '.join(repr(n) for n in nif_list)})"
+        try:
+            tunnel = make_tunnel()
+        except Exception as e:
+            print(f"SSH tunnel unavailable, trying direct connection: {e}")
+            tunnel = None
+        with make_db(tunnel) as db:
+            df = db.get_table_info(
+                table_name='Unit',
+                cols='id, nif, id_unit_izaro',
+                where=where,
+            )
+        return df if not df.empty else pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
     except Exception as e:
         print(f"DB query error: {e}")
         raise
@@ -330,7 +328,9 @@ def apply_final_column_mapping(df: pd.DataFrame) -> pd.DataFrame:
     }
     df = df.rename(columns=mapping)
     if 'Precio' in df.columns:
-        df['Precio'] = df['Precio'].round(2)
+        df['Precio'] = df['Precio'].round(2).astype(str).str.replace('.', ',', regex=False)
+    if 'Fecha Pedido' in df.columns:
+        df['Fecha Pedido'] = pd.to_datetime(df['Fecha Pedido'], utc=True).dt.strftime('%d/%m/%Y')
 
     final_columns = [
         "N Pedido", "Codigo Farmacia", "Codigo Producto",
@@ -462,9 +462,12 @@ def task_load_fact_table(**context):
             left_on='NIF', right_on='nif', how='left'
         )
         df = df.drop(columns=['nif'], errors='ignore')
+    else:
+        df['Cliente Alliance'] = None
 
+    print(f"Columns before mapping: {list(df.columns)}")
     df = apply_final_column_mapping(df)
-    print(f"Fact table ready: {len(df)} rows")
+    print(f"Fact table ready: {len(df)} rows, columns: {list(df.columns)}")
     return df.to_dict('records')
 
 
@@ -474,10 +477,12 @@ def task_upload_to_ftp(**context):
         print("No data to upload")
         return
     df = pd.DataFrame(records)
+    col_order = ["N Pedido", "Codigo Farmacia", "Codigo Producto", "Unidades", "Precio", "Descuento", "Fecha Pedido"]
+    df = df[[c for c in col_order if c in df.columns]]
     with FTPConn.from_airflow(FTP_CONN_ID) as ftp:
         for pedido in df['N Pedido'].unique():
             df_pedido = df[df['N Pedido'] == pedido]
-            remote_file = f"{FTP_REMOTE_PATH}Pedido_AP_{pedido}.csv"
+            remote_file = f"{FTP_REMOTE_PATH}Pedidos_AP_{pedido}.csv"
             ftp.upload_df(df_pedido, remote_file, sep=";", sheet_name=f"Pedidos_AP_{pedido}")
     print(f"Uploaded {len(df)} rows to FTP")
 
@@ -486,7 +491,7 @@ def task_cleanup(**context):
         with FTPConn.from_airflow(FTP_CONN_ID) as ftp:
             files = ftp.list(FTP_REMOTE_PATH)
             for file in files:
-                if file.startswith(f"{FTP_REMOTE_PATH}Pedido_AP_"):
+                if file.startswith(f"{FTP_REMOTE_PATH}Pedidos_AP_"):
                     ftp.remove(file)
             print("Cleanup task completed")
     except Exception as e:
