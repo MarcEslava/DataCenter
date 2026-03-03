@@ -320,28 +320,21 @@ def merge_with_billing(orders_df: pd.DataFrame, billing_df: pd.DataFrame) -> pd.
 
 def apply_final_column_mapping(df: pd.DataFrame) -> pd.DataFrame:
     mapping = {
-        "PEDIDO": "Pedido",
-        "FECHA": "F.Pedido",
-        "COMPANY": "Farmacia",
-        "ADDRESS": "Direcion",
-        "CITY": "Poblacion",
-        "ZIP": "Codigo Postal",
-        "STATE": "Provincia",
+        "PEDIDO": "N Pedido",
+        "FECHA": "Fecha Pedido",
         "PRODUCTO": "Codigo Producto",
-        "UNIDADES": "C.Pedida",
+        "UNIDADES": "Unidades",
         "PRECIO": "Precio",
         "DTO": "Descuento",
-        "NIF": "CustomerCifId",
-        "TAXES": "Iva",
+        "Cliente Alliance": "Codigo Farmacia",
     }
     df = df.rename(columns=mapping)
     if 'Precio' in df.columns:
         df['Precio'] = df['Precio'].round(2)
 
     final_columns = [
-        "F.Pedido", "Pedido", "Farmacia", "Direcion", "Codigo Postal",
-        "Poblacion", "Provincia", "Codigo Producto", "C.Pedida",
-        "Precio", "Descuento", "Iva", "RE", "CustomerCifId", "Cliente Alliance",
+        "N Pedido", "Codigo Farmacia", "Codigo Producto",
+        "Unidades", "Precio", "Descuento", "Fecha Pedido",
     ]
     return df[[c for c in final_columns if c in df.columns]]
 
@@ -482,8 +475,8 @@ def task_upload_to_ftp(**context):
         return
     df = pd.DataFrame(records)
     with FTPConn.from_airflow(FTP_CONN_ID) as ftp:
-        for pedido in df['Pedido'].unique():
-            df_pedido = df[df['Pedido'] == pedido]
+        for pedido in df['N Pedido'].unique():
+            df_pedido = df[df['N Pedido'] == pedido]
             remote_file = f"{FTP_REMOTE_PATH}Pedido_AP_{pedido}.csv"
             ftp.upload_df(df_pedido, remote_file, sep=";", sheet_name=f"Pedidos_AP_{pedido}")
     print(f"Uploaded {len(df)} rows to FTP")
