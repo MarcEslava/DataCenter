@@ -4,7 +4,7 @@ Este directorio contiene plantillas de vhost para publicar los servicios del sta
 
 ## Archivos
 
-- `vhost/datahub.conf`: landing estática (`/var/www/html`).
+- `vhost/datahub.conf`: landing estática (DocumentRoot parametrizable).
 - `vhost/datahub-airflow.conf`: proxy HTTPS a Airflow (`127.0.0.1:8080`) en raiz `/`.
 - `vhost/datahub-spark.conf`: proxy HTTPS a Spark UI (`127.0.0.1:9090`) en raiz `/`.
 - `vhost/datahub-kafka.conf`: proxy HTTPS a Control Center (`127.0.0.1:9021`) en raiz `/`.
@@ -27,6 +27,8 @@ Define DATAHUB_MAIN_DOMAIN datahub.ecoceutics.com
 Define DATAHUB_AIRFLOW_DOMAIN datahub-airflow.ecoceutics.com
 Define DATAHUB_SPARK_DOMAIN datahub-spark.ecoceutics.com
 Define DATAHUB_KAFKA_DOMAIN datahub-kafka.ecoceutics.com
+Define DATAHUB_AUTH_USER_FILE /etc/apache2/.htpasswd-datahub
+Define DATAHUB_DOCUMENT_ROOT /var/www/html
 ```
 
 ## Debian/Ubuntu (apache2)
@@ -69,34 +71,6 @@ sudo systemctl reload apache2
 
 Con symlinks, cualquier cambio en `www/vhost/datahub*.conf` dentro del repo se refleja al recargar Apache (sin volver a copiar archivos).
 
-## RHEL/CentOS/Rocky (httpd)
-
-1. Copia `domains` y vhosts en `conf.d` (o crea symlinks).
-2. Verifica que SSL/proxy modules esten instalados/cargados.
-3. Valida y recarga `httpd`.
-
-Ejemplo:
-
-```bash
-sudo cp www/vhost/domains.example.conf /etc/httpd/conf.d/datahub-domains.conf
-sudo cp www/vhost/datahub*.conf /etc/httpd/conf.d/
-
-sudo apachectl configtest
-sudo systemctl reload httpd
-```
-
-Alternativa con symlinks:
-
-```bash
-sudo ln -sfn /ruta/al/repo/ecopipeline/www/vhost/datahub.conf /etc/httpd/conf.d/datahub.conf
-sudo ln -sfn /ruta/al/repo/ecopipeline/www/vhost/datahub-airflow.conf /etc/httpd/conf.d/datahub-airflow.conf
-sudo ln -sfn /ruta/al/repo/ecopipeline/www/vhost/datahub-spark.conf /etc/httpd/conf.d/datahub-spark.conf
-sudo ln -sfn /ruta/al/repo/ecopipeline/www/vhost/datahub-kafka.conf /etc/httpd/conf.d/datahub-kafka.conf
-
-sudo apachectl configtest
-sudo systemctl reload httpd
-```
-
 ## Certificados TLS
 
 Cada vhost espera certificados en:
@@ -105,6 +79,23 @@ Cada vhost espera certificados en:
 - `/etc/letsencrypt/live/${DATAHUB_MAIN_DOMAIN}/privkey.pem`
 
 Y equivalentemente para `DATAHUB_AIRFLOW_DOMAIN`, `DATAHUB_SPARK_DOMAIN`, `DATAHUB_KAFKA_DOMAIN`.
+
+## Creacion de usuario (BasicAuth)
+
+Para proteger `datahub-spark` y `datahub-kafka` con usuario/contrasena, crea un archivo `htpasswd` en el host Apache.
+Los vhosts usan `AuthUserFile ${DATAHUB_AUTH_USER_FILE}`.
+
+Debian/Ubuntu (`apache2`):
+
+```bash
+# crea el archivo y el primer usuario
+sudo htpasswd -c /etc/apache2/.htpasswd-datahub admin
+
+# agrega mas usuarios (sin -c)
+sudo htpasswd /etc/apache2/.htpasswd-datahub otro_usuario
+```
+
+Nota: usa `-c` solo la primera vez; si lo vuelves a usar, sobrescribe el archivo.
 
 ## Variables del stack relacionadas
 
