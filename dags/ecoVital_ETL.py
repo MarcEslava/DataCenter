@@ -55,7 +55,7 @@ dag = DAG(
     'ecovital_etl',
     default_args=default_args,
     description='EcoVital Orders ETL Pipeline',
-    schedule='@daily',
+    schedule='30 11 * * *',
     start_date=datetime(2026, 1, 1),
     catchup=False,
 )
