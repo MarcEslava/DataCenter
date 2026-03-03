@@ -40,7 +40,7 @@ API_RATE_LIMIT_DELAY = 0.3
 FTP_CONN_ID = "aqua_ftp"
 FTP_REMOTE_PATH = Variable.get("ftp_remote_path", default_var="/")
 
-SSH_CONN_ID = "fidfarma_ssh"
+SSH_CONN_ID = "ssh_tunnel"
 DB_CONN_ID = "fidfarma_db"
 
 TAX_MAPPING = Variable.get("ecovital_tax_mapping", deserialize_json=True, default_var={})
@@ -202,7 +202,7 @@ def make_tunnel():
         )
     except Exception as e:
         print(f"SSH Tunnel error: {e}")
-        return None
+        raise
 
 
 def make_db(tunnel):
@@ -220,7 +220,7 @@ def make_db(tunnel):
         )
     except Exception as e:
         print(f"DB connection error: {e}")
-        return None
+        raise
 
 
 def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
@@ -229,7 +229,11 @@ def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
             return pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
 
         where = f"nif IN ({', '.join(repr(n) for n in nif_list)})"
-        tunnel = make_tunnel()
+        try:
+            tunnel = make_tunnel()
+        except Exception as e:
+            print(f"SSH tunnel unavailable, trying direct connection: {e}")
+            tunnel = None
         with make_db(tunnel) as db:
             df = db.get_table_info(
                 table_name='Unit',
@@ -324,7 +328,9 @@ def apply_final_column_mapping(df: pd.DataFrame) -> pd.DataFrame:
     }
     df = df.rename(columns=mapping)
     if 'Precio' in df.columns:
-        df['Precio'] = df['Precio'].round(2)
+        df['Precio'] = df['Precio'].round(2).astype(str).str.replace('.', ',', regex=False)
+    if 'Fecha Pedido' in df.columns:
+        df['Fecha Pedido'] = pd.to_datetime(df['Fecha Pedido'], utc=True).dt.strftime('%d/%m/%Y')
 
     final_columns = [
         "N Pedido", "Codigo Farmacia", "Codigo Producto",
@@ -471,6 +477,8 @@ def task_upload_to_ftp(**context):
         print("No data to upload")
         return
     df = pd.DataFrame(records)
+    col_order = ["N Pedido", "Codigo Farmacia", "Codigo Producto", "Unidades", "Precio", "Descuento", "Fecha Pedido"]
+    df = df[[c for c in col_order if c in df.columns]]
     with FTPConn.from_airflow(FTP_CONN_ID) as ftp:
         for pedido in df['N Pedido'].unique():
             df_pedido = df[df['N Pedido'] == pedido]
