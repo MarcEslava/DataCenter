@@ -499,14 +499,26 @@ def task_upload_to_ftp(**context):
 
 def notify_logicommerce_order_status(token: str, order_number: str, state: int = 2) -> None:
     """Change a LogiCommerce order state via /orders/{orderNumber}/changeState.
-    state=2 → in_process
+    state=2 → in_process (hardcoded — only state used in this pipeline for now)
     """
-    url = f"{LOGICOMMERCE_API_BASE}/orders/{order_number}/changeState"
     headers = build_logicommerce_headers(token)
-    payload = {"changeState": {"state": state}}
-    response = requests.put(url, headers=headers, json=payload)
+
+    # Resolve internal LogiCommerce order ID from the external order number
+    getid_response = requests.get(
+        f"{LOGICOMMERCE_API_BASE}/orders/getid/{order_number}",
+        headers=headers,
+    )
+    getid_response.raise_for_status()
+    internal_id = getid_response.json()["ID"]
+
+    # Change state using the internal ID
+    response = requests.put(
+        f"{LOGICOMMERCE_API_BASE}/orders/{internal_id}/changeState",
+        headers=headers,
+        json={"changeState": {"state": state}},
+    )
     response.raise_for_status()
-    print(f"  Order {order_number} → state {state} (HTTP {response.status_code})")
+    print(f"  Order {order_number} (id={internal_id}) → state {state} (HTTP {response.status_code})")
 
 
 def task_notify_logicommerce(**context):
