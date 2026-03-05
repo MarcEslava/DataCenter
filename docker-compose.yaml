@@ -18,7 +18,7 @@ x-deploy-small: &deploy-small
 
 x-deploy-medium: &deploy-medium
   resources:
-    limits: { cpus: '2', memory: 2G }
+    limits: { cpus: '2', memory: 4G }
     reservations: { cpus: '0.5', memory: 1G }
 
 x-airflow-common: &airflow-common
@@ -255,7 +255,7 @@ services:
       spark-master: { condition: service_started }
     environment:
       SPARK_MODE: worker
-      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_CORES: 1
       SPARK_WORKER_MEMORY: 1g
       SPARK_MASTER_URL: spark://spark-master:7077
       SPARK_WORKER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
