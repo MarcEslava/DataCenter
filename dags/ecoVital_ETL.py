@@ -34,7 +34,7 @@ LOGICOMMERCE_SECRET = Variable.get("logicommerce_secret")
 ECOCEUTICS_API_BASE = Variable.get("ecoceutics_api_base")
 ECOCEUTICS_API_KEY = Variable.get("ecoceutics_api_key")
 
-API_RATE_LIMIT_DELAY = 0.3
+API_RATE_LIMIT_DELAY = Variable.get("api_rate_limit_delay", default_var=1)  # seconds between API calls to avoid rate limits
 
 # Connections
 FTP_CONN_ID = "aqua_ftp"
@@ -514,6 +514,7 @@ def notify_logicommerce_order_status(token: str, order_number: str, state: int =
     )
     getid_response.raise_for_status()
     internal_id = getid_response.json()["ID"]
+    sleep(API_RATE_LIMIT_DELAY)
 
     # Change state using the internal ID
     response = requests.put(
@@ -542,8 +543,12 @@ def task_notify_logicommerce(**context):
             notify_logicommerce_order_status(token, order_number, state=2)
             sleep(API_RATE_LIMIT_DELAY)
         except requests.HTTPError as e:
-            print(f"  Order {order_number}: FAILED ({e.response.status_code} - {e.response.text})")
-            failed.append(order_number)
+            # TLG014130 = order already in target state — not a real failure
+            if e.response.status_code == 400 and "TLG014130" in e.response.text:
+                print(f"  Order {order_number}: already in_process, skipping")
+            else:
+                print(f"  Order {order_number}: FAILED ({e.response.status_code} - {e.response.text})")
+                failed.append(order_number)
 
     if failed:
         raise RuntimeError(f"Failed to notify LogiCommerce for orders: {failed}")
