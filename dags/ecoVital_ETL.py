@@ -228,7 +228,7 @@ def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
         if not nif_list:
             return pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
 
-        where = f"nif IN ({', '.join(repr(n) for n in nif_list)})"
+        where = f"nif IN ({', '.join(repr(n) for n in nif_list)}) AND bt_status = 1"
         try:
             tunnel = make_tunnel()
         except Exception as e:
@@ -240,7 +240,11 @@ def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
                 cols='id, nif, id_unit_izaro',
                 where=where,
             )
-        return df if not df.empty else pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
+        if df.empty:
+            return pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
+        # Keep only the highest id_unit_izaro per NIF (one alliance code per client)
+        df = df.sort_values('id_unit_izaro').drop_duplicates(subset='nif', keep='last')
+        return df
     except Exception as e:
         print(f"DB query error: {e}")
         raise
