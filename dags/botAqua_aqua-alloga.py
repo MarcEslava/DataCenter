@@ -23,7 +23,7 @@ dag = DAG(
 
 def task_execute_bot(**context):
     import requests
-# curl --insecure --request POST --url https://ecoceutics-dev.bbos.services.aquaebs.com/api/instance/execute 
+# curl --insecure --request POST --url https://ecoceutics-dev.bbos.services.aquabpi.com/api/instance/execute 
 # --header 'Content-Type: application/json' 
 # --data "{
     # 'InstanceId':'b71ccef7-959c-421d-b909-71180ae55172',
@@ -33,7 +33,7 @@ def task_execute_bot(**context):
 
     try:
         response = requests.post(
-            "https://ecoceutics-dev.bbos.services.aquaebs.com/api/instance/execute",
+            "https://ecoceutics-dev.bbos.services.aquabpi.com/api/instance/execute",
             json={
                 "InstanceId": "b71ccef7-959c-421d-b909-71180ae55172",
                 "SkillId":    "f760bc8e-6c0f-4f49-acf3-2b3e2692d7e9",
