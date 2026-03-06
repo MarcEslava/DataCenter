@@ -293,27 +293,12 @@ def novedades_sku_pharma_etl():
             if products_df.empty or mapped_df.empty:
                 print(f"[{client_name}] No data to transform")
                 return {"client_name": client_name, "rows": []}
-
-            # TODO [DATA-48]: Adjust merge key
+            
             df = pd.merge(products_df, mapped_df, on='key_column', how='left')
 
             # ── Clean ──
             df = df.drop_duplicates()
             df = df.dropna(subset=['key_column'])
-
-            # ── Rename columns ──
-            # TODO [DATA-49]: Adjust column mapping
-            # column_mapping = {'source_col': 'Target Name'}
-            # df = df.rename(columns=column_mapping)
-
-            # ── Derived columns ──
-            # TODO [DATA-50]: Add calculated fields
-            # df['margin'] = df['sell_price'] - df['buy_price']
-
-            # ── Final column selection ──
-            # TODO [DATA-51]: Adjust
-            # final_columns = ['col_a', 'col_b', 'col_c']
-            # df = df[[c for c in final_columns if c in df.columns]]
 
             print(f"[{client_name}] Transformed {len(df)} rows")
             return {"client_name": client_name, "rows": df.to_dict('records')}
@@ -331,13 +316,6 @@ def novedades_sku_pharma_etl():
                 return
 
             df = pd.DataFrame(rows)
-
-            # ── Option A: Write to SQL ──
-            # TODO [DATA-52]: Uncomment and adjust
-            # from airflow.providers.microsoft.mssql.hooks.mssql import MsSqlHook
-            # hook = MsSqlHook(mssql_conn_id=SQL_PRODUCTS_CONN_ID)
-            # engine = hook.get_sqlalchemy_engine()
-            # df.to_sql(f'novedades_{safe_name}', con=engine, if_exists='replace', index=False)
 
             # ── Option B: Write to CSV (one per client) ──
             safe_name = client_name.replace("'", "").replace(" ", "_").lower()
