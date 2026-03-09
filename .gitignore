@@ -43,3 +43,8 @@ webserver_config.py
 
 # Docker
 *.log
+
+# Output files
+*.xlsx
+*.csv
+output/
