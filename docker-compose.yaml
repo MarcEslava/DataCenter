@@ -82,11 +82,7 @@ services:
       OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
       KAFKA_JMX_PORT: 9101
       KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
-      KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
-      CONFLUENT_METRICS_ENABLE: "false"  # disable internal metrics to reduce load in single-broker setup
-      CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: broker:29092
-      CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: "1"   # single-broker cluster
-      CONFLUENT_METRICS_REPORTER_TOPIC_CREATE: "true"  # auto-create _confluent-metrics
+      KAFKA_METRIC_REPORTERS: ""  # disabled — no ConfluentMetricsReporter loaded
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,EXTERNAL://kafka.ecoceutics.com:9092
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/jaas.conf -Dzookeeper.sasl.client=true -Dzookeeper.sasl.client.username=kafka"
       CONFLUENT_CRUISE_CONTROL_ENABLE: "false"
