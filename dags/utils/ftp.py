@@ -155,10 +155,10 @@ class FTPConn:
                     time.sleep(2)
         print(f"[FTP DEBUG] upload_bytes() done: {len(data)} bytes -> {remote_path}")
 
-    def upload_df(self, df: pd.DataFrame, remote_path: str, sep: str = ",") -> None:
+    def upload_df(self, df: pd.DataFrame, remote_path: str, sep: str = ";", sheet_name: str = "Sheet1") -> None:
         """Upload DataFrame as CSV to remote path."""
         print(f"[FTP DEBUG] upload_df() rows={len(df)} cols={list(df.columns)} remote={remote_path}")
-        csv_bytes = df.to_csv(index=False, sep=sep).encode("utf-8")
+        csv_bytes = df.to_csv(index=False, sep=sep, header=False).encode("utf-8")
         print(f"[FTP DEBUG] upload_df() CSV size={len(csv_bytes)} bytes")
         self.upload_bytes(csv_bytes, remote_path)
 

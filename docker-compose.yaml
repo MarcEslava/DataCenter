@@ -12,10 +12,11 @@ x-deploy-small: &deploy-small
   resources:
     limits: { cpus: '1', memory: 1G }
     reservations: { cpus: '0.25', memory: 512M }
+    
 
 x-deploy-medium: &deploy-medium
   resources:
-    limits: { cpus: '2', memory: 2G }
+    limits: { cpus: '2', memory: 4G }
     reservations: { cpus: '0.5', memory: 1G }
 
 x-airflow-common: &airflow-common
@@ -88,7 +89,7 @@ services:
       KAFKA_JMX_PORT: 9101
       KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
-      CONFLUENT_METRICS_ENABLE: "true"
+      CONFLUENT_METRICS_ENABLE: "false"
       CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: broker:29092
       CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: "1"   # single-broker cluster
       CONFLUENT_METRICS_REPORTER_TOPIC_CREATE: "true"  # auto-create _confluent-metrics
@@ -252,8 +253,8 @@ services:
       SPARK_MASTER_HOST: spark-master
       SPARK_MASTER_PORT: 7077
       SPARK_MASTER_WEBUI_PORT: 8080
-      SPARK_MASTER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
-      SPARK_PUBLIC_DNS: datahub.local
+      SPARK_MASTER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.reverseProxyUrl=${SPARK_UI_REVERSE_PROXY_URL:-http://datahub.local/spark}"
+      SPARK_PUBLIC_DNS: ${SPARK_PUBLIC_DNS:-datahub.local}
       SPARK_NO_DAEMONIZE: "true"
       SPARK_LOG_LEVEL: ERROR
     ports: ["9090:8080", "7077:7077"]
@@ -267,10 +268,10 @@ services:
       spark-master: { condition: service_started }
     environment:
       SPARK_MODE: worker
-      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_CORES: 1
       SPARK_WORKER_MEMORY: 1g
       SPARK_MASTER_URL: spark://spark-master:7077
-      SPARK_WORKER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
+      SPARK_WORKER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.reverseProxyUrl=${SPARK_UI_REVERSE_PROXY_URL:-http://datahub.local/spark}"
       SPARK_WORKER_HOST: spark-worker
       SPARK_WORKER_WEBUI_PORT: 8081
       SPARK_LOG_LEVEL: ERROR
@@ -315,4 +316,3 @@ volumes:
 
 networks:
   confluent:
-
