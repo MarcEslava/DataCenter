@@ -19,7 +19,9 @@ from airflow.models import Variable
 ZOHO_CONN_ID = "zoho_crm"
 SQL_ACORDS_CONN_ID = "biOps_db"      # SQL connection 1 (acordsEcos)
 SQL_PRODUCTS_CONN_ID = "BIFarma_db"  # SQL connection 2 (products/sales)
-SSH_CONN_ID = "ecovital_ssh"            # SSH tunnel (optional — falls back to direct if unavailable)
+SSH_CONN_ID = "ecovital_ssh"         # SSH tunnel (optional — falls back to direct if unavailable)
+
+MAIL_RECIPIENTS = ["afochez@ecoceutics.com", "phojas@ecoceutcis.com", "apirretas@ecoceutics.com"]  # For notifications (optional)
 
 # ─────────────────────────────────────────────────────────────
 # SSH / DB helpers
@@ -114,10 +116,12 @@ def novedades_sku_pharma_etl():
             page += 1
             sleep(0.3)
         grouped = {}
+        category_managers_mails = {}
         
         for v in all_vendors:
             if v.get("Tipo_Acuerdo") == "Obligatorio" or v.get("Tipo_Acuerdo") == "Opcional":
                 client_name = v.get("Client_Name", "Unknown Client")
+                
                 grouped.setdefault(client_name, []).append(v)
         clients = [
             {"client_name": name, "vendors": vendors}
@@ -336,6 +340,12 @@ def novedades_sku_pharma_etl():
     products = extract_products()
     acords = extract_acords()
     process_client.partial(all_products=products, all_acords=acords).expand(client_data=clients)
+
+def send_notification(message: str):
+    """Send a notification email with 'novedades' using zoho mailing."""
+    
+    import requests
+
 
 
 # Instantiate the DAG
