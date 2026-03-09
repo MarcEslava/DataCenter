@@ -19,37 +19,19 @@ from airflow.models import Variable
 ZOHO_CONN_ID = "zoho_crm"
 SQL_ACORDS_CONN_ID = "biOps_db"      # SQL connection 1 (acordsEcos)
 SQL_PRODUCTS_CONN_ID = "BIFarma_db"  # SQL connection 2 (products/sales)
-SSH_CONN_ID = "ecovital_ssh"         # SSH tunnel (optional — falls back to direct if unavailable)
 
-MAIL_RECIPIENTS = ["afochez@ecoceutics.com", "phojas@ecoceutcis.com", "apirretas@ecoceutics.com"]  # For notifications (optional)
+MAIL_RECIPIENTS = ["afochez@ecoceutics.com", "phojas@ecoceutcis.com", "apirretas@ecoceutics.com"]
 
 # ─────────────────────────────────────────────────────────────
-# SSH / DB helpers
+# DB helpers
 # ─────────────────────────────────────────────────────────────
 
-def _make_tunnel():
-    from airflow.hooks.base import BaseHook
-    from utils.clsSSHTunnel import SSHTunnel
-    conn = BaseHook.get_connection(SSH_CONN_ID)
-    extra = conn.extra_dejson
-    key_file = extra.get("key_file")
-    key_content = open(key_file).read() if key_file else None
-    return SSHTunnel(
-        ssh_host=conn.host,
-        ssh_port=conn.port or 22,
-        ssh_username=conn.login,
-        ssh_password=conn.password or None,
-        ssh_private_key=key_content,
-        remote_host=extra.get("remote_host", "127.0.0.1"),
-        remote_port=int(extra.get("remote_port", 1433)),
-    )
-
-
-def _make_mssql_db(conn_id: str, tunnel=None):
+def _query_mssql(conn_id: str, sql: str):
+    """Run a SQL query. Port forwarding is managed at the OS level."""
     from airflow.hooks.base import BaseHook
     from utils.clsSQL import SQLConnection
     conn = BaseHook.get_connection(conn_id)
-    return SQLConnection(
+    db = SQLConnection(
         db_host=conn.host,
         db_port=conn.port or 1433,
         db_database=conn.schema,
@@ -57,18 +39,8 @@ def _make_mssql_db(conn_id: str, tunnel=None):
         db_password=conn.password,
         dialect="mssql",
         driver="pymssql",
-        ssh_tunnel=tunnel,
     )
-
-
-def _query_mssql(conn_id: str, sql: str):
-    """Run a SQL query with SSH tunnel, falling back to direct connection."""
-    try:
-        tunnel = _make_tunnel()
-    except Exception as e:
-        print(f"SSH tunnel unavailable, trying direct connection: {e}")
-        tunnel = None
-    with _make_mssql_db(conn_id, tunnel) as db:
+    with db:
         return db.fech_dataframe(sql)
 
 
@@ -187,13 +159,19 @@ def novedades_sku_pharma_etl():
 
             ECO_FILTER = "(T1.idendes IN (SELECT idendes FROM tme_delegaciones WHERE grupoCompras = 'ECO'))"
 
-            try:
-                tunnel = _make_tunnel()
-            except Exception as e:
-                print(f"SSH tunnel unavailable, trying direct connection: {e}")
-                tunnel = None
-
-            with _make_mssql_db(SQL_PRODUCTS_CONN_ID, tunnel) as db:
+            from airflow.hooks.base import BaseHook
+            from utils.clsSQL import SQLConnection
+            _conn = BaseHook.get_connection(SQL_PRODUCTS_CONN_ID)
+            db = SQLConnection(
+                db_host=_conn.host,
+                db_port=_conn.port or 1433,
+                db_database=_conn.schema,
+                db_username=_conn.login,
+                db_password=_conn.password,
+                dialect="mssql",
+                driver="pymssql",
+            )
+            with db:
                 # ── Current year ──
                 act_df = db.fech_dataframe(f"""
                     SELECT {BASE_COLS},
