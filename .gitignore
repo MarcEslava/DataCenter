@@ -154,6 +154,10 @@ data/
 
 *.csv
 
+tets.json
+
+output/**/*.json
+
 # Secrets
 
 secrets/
