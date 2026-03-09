@@ -21,7 +21,7 @@ definitions:
       --exclude='.git/'
       --exclude='.env'
       --exclude='secrets/'
-      --exclude='__pycache__/'+
+      --exclude='__pycache__/'
       --exclude='*.pyc'
       --exclude='output/'
       --exclude='data/'
@@ -52,7 +52,7 @@ definitions:
               ${DEPLOY_USER}@${DEPLOY_SERVER_IP}:${DEPLOY_TEST_PATH}/dags/
           - ssh -i ~/.ssh/deploy_key
               ${DEPLOY_USER}@${DEPLOY_SERVER_IP}
-              "cd ${DEPLOY_TEST_PATH} && bash setup.sh dags-only"
+              "cd ${DEPLOY_TEST_PATH} && bash deploy.sh dags-only"
 
     - step: &deploy-dags-prod
         name: "Deploy DAGs to PROD"
@@ -66,7 +66,7 @@ definitions:
               ${DEPLOY_USER}@${DEPLOY_SERVER_IP}:${DEPLOY_PROD_PATH}/dags/
           - ssh -i ~/.ssh/deploy_key
               ${DEPLOY_USER}@${DEPLOY_SERVER_IP}
-              "cd ${DEPLOY_PROD_PATH} && bash setup.sh dags-only"
+              "cd ${DEPLOY_PROD_PATH} && bash deploy.sh dags-only"
 
     - step: &deploy-full-test
         name: "Full Stack Deploy to TEST"
@@ -90,7 +90,7 @@ definitions:
               ${DEPLOY_USER}@${DEPLOY_SERVER_IP}:${DEPLOY_TEST_PATH}/
           - ssh -i ~/.ssh/deploy_key
               ${DEPLOY_USER}@${DEPLOY_SERVER_IP}
-              "cd ${DEPLOY_TEST_PATH} && bash setup.sh full-stack"
+              "cd ${DEPLOY_TEST_PATH} && bash deploy.sh full-stack"
 
     - step: &deploy-full-prod
         name: "Full Stack Deploy to PROD"
@@ -114,7 +114,7 @@ definitions:
               ${DEPLOY_USER}@${DEPLOY_SERVER_IP}:${DEPLOY_PROD_PATH}/
           - ssh -i ~/.ssh/deploy_key
               ${DEPLOY_USER}@${DEPLOY_SERVER_IP}
-              "cd ${DEPLOY_PROD_PATH} && bash setup.sh full-stack"
+              "cd ${DEPLOY_PROD_PATH} && bash deploy.sh full-stack"
 
 pipelines:
   branches:
