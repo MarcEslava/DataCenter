@@ -38,9 +38,9 @@ API_RATE_LIMIT_DELAY = 0.3
 
 # Connections
 FTP_CONN_ID = "aqua_ftp"
-FTP_REMOTE_PATH = "ftp_remote_path"
+FTP_REMOTE_PATH = Variable.get("ftp_remote_path", default_var="/")
 
-SSH_CONN_ID = "fidfarma_ssh"
+SSH_CONN_ID = "ssh_tunnel"
 DB_CONN_ID = "fidfarma_db"
 
 TAX_MAPPING = Variable.get("ecovital_tax_mapping", deserialize_json=True, default_var={})
@@ -202,7 +202,7 @@ def make_tunnel():
         )
     except Exception as e:
         print(f"SSH Tunnel error: {e}")
-        return None
+        raise
 
 
 def make_db(tunnel):
@@ -220,29 +220,31 @@ def make_db(tunnel):
         )
     except Exception as e:
         print(f"DB connection error: {e}")
-        return None
+        raise
 
 
 def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
     try:
         if not nif_list:
             return pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
-        
-        if make_tunnel() is None:
-            with make_db(tunnel=None) as db:
-                df = db.get_table_info(
-                    table_name='Unit',
-                    cols='id, nif, id_unit_izaro',
-                    where=f"nif IN ({', '.join(repr(n) for n in nif_list)})",
-                )
-        else:
-            with make_tunnel() as tunnel, make_db(tunnel) as db:
-                df = db.get_table_info(
-                    table_name='Unit',
-                    cols='id, nif, id_unit_izaro',
-                    where=f"nif IN ({', '.join(repr(n) for n in nif_list)})",
-                )
-            return df if not df.empty else pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
+
+        where = f"nif IN ({', '.join(repr(n) for n in nif_list)}) AND bt_status = 1"
+        try:
+            tunnel = make_tunnel()
+        except Exception as e:
+            print(f"SSH tunnel unavailable, trying direct connection: {e}")
+            tunnel = None
+        with make_db(tunnel) as db:
+            df = db.get_table_info(
+                table_name='Unit',
+                cols='id, nif, id_unit_izaro',
+                where=where,
+            )
+        if df.empty:
+            return pd.DataFrame(columns=['id', 'nif', 'id_unit_izaro'])
+        # Keep only the highest id_unit_izaro per NIF (one alliance code per client)
+        df = df.sort_values('id_unit_izaro').drop_duplicates(subset='nif', keep='last')
+        return df
     except Exception as e:
         print(f"DB query error: {e}")
         raise
@@ -330,7 +332,9 @@ def apply_final_column_mapping(df: pd.DataFrame) -> pd.DataFrame:
     }
     df = df.rename(columns=mapping)
     if 'Precio' in df.columns:
-        df['Precio'] = df['Precio'].round(2)
+        df['Precio'] = df['Precio'].round(2).astype(str).str.replace('.', ',', regex=False)
+    if 'Fecha Pedido' in df.columns:
+        df['Fecha Pedido'] = pd.to_datetime(df['Fecha Pedido'], utc=True).dt.strftime('%d/%m/%Y')
 
     final_columns = [
         "N Pedido", "Codigo Farmacia", "Codigo Producto",
@@ -462,9 +466,12 @@ def task_load_fact_table(**context):
             left_on='NIF', right_on='nif', how='left'
         )
         df = df.drop(columns=['nif'], errors='ignore')
+    else:
+        df['Cliente Alliance'] = None
 
+    print(f"Columns before mapping: {list(df.columns)}")
     df = apply_final_column_mapping(df)
-    print(f"Fact table ready: {len(df)} rows")
+    print(f"Fact table ready: {len(df)} rows, columns: {list(df.columns)}")
     return df.to_dict('records')
 
 
@@ -472,27 +479,130 @@ def task_upload_to_ftp(**context):
     records = context['task_instance'].xcom_pull(task_ids='load_fact_table')
     if not records:
         print("No data to upload")
-        return
+        return []
     df = pd.DataFrame(records)
+    col_order = ["N Pedido", "Codigo Farmacia", "Codigo Producto", "Unidades", "Precio", "Descuento", "Fecha Pedido"]
+    df = df[[c for c in col_order if c in df.columns]]
+
+    max_pedido = context['task_instance'].xcom_pull(task_ids='cleanup_ftp') or 0
+    df = df[df['N Pedido'].astype(int) > int(max_pedido)]
+    print(f"Uploading pedidos > {max_pedido}: {df['N Pedido'].nunique()} pedidos")
+    if df.empty:
+        print("No new pedidos to upload")
+        return []
+
+    uploaded = []
     with FTPConn.from_airflow(FTP_CONN_ID) as ftp:
         for pedido in df['N Pedido'].unique():
             df_pedido = df[df['N Pedido'] == pedido]
-            remote_file = f"{FTP_REMOTE_PATH}Pedido_AP_{pedido}.csv"
+            remote_file = f"{FTP_REMOTE_PATH}Pedidos_AP_{pedido}.csv"
             ftp.upload_df(df_pedido, remote_file, sep=";", sheet_name=f"Pedidos_AP_{pedido}")
-    print(f"Uploaded {len(df)} rows to FTP")
+            uploaded.append(str(pedido))
+    print(f"Uploaded {len(df)} rows to FTP ({len(uploaded)} pedidos)")
+    return uploaded
+
+def notify_logicommerce_order_status(token: str, order_number: str, state: int = 2) -> None:
+    """Change a LogiCommerce order state via /orders/{orderNumber}/changeState.
+    state=2 → in_process (hardcoded — only state used in this pipeline for now)
+    """
+    headers = build_logicommerce_headers(token)
+
+    # Resolve internal LogiCommerce order ID from the external order number
+    getid_response = requests.get(
+        f"{LOGICOMMERCE_API_BASE}/orders/getid/{order_number}",
+        headers=headers,
+    )
+    getid_response.raise_for_status()
+    internal_id = getid_response.json()["ID"]
+
+    # Change state using the internal ID
+    response = requests.put(
+        f"{LOGICOMMERCE_API_BASE}/orders/{internal_id}/changeState",
+        headers=headers,
+        json={"changeState": {"state": state}},
+    )
+    response.raise_for_status()
+    print(f"  Order {order_number} (id={internal_id}) → state {state} (HTTP {response.status_code})")
+
+
+def task_notify_logicommerce(**context):
+    """Notify LogiCommerce that uploaded pedidos are now in_process."""
+    ti = context['task_instance']
+    uploaded = ti.xcom_pull(task_ids='upload_to_ftp') or []
+    if not uploaded:
+        print("No pedidos to notify")
+        return
+
+    token = ti.xcom_pull(task_ids='generate_token')
+    print(f"Notifying LogiCommerce for {len(uploaded)} pedidos: {uploaded}")
+    failed = []
+    for order_number in uploaded:
+        try:
+            # state=2 (in_process) is hardcoded — only state used in this pipeline for now
+            notify_logicommerce_order_status(token, order_number, state=2)
+            sleep(API_RATE_LIMIT_DELAY)
+        except requests.HTTPError as e:
+            print(f"  Order {order_number}: FAILED ({e.response.status_code} - {e.response.text})")
+            failed.append(order_number)
+
+    if failed:
+        raise RuntimeError(f"Failed to notify LogiCommerce for orders: {failed}")
+    print(f"All {len(uploaded)} pedidos marked as in_process")
+
 
 def task_cleanup(**context):
     try:
         with FTPConn.from_airflow(FTP_CONN_ID) as ftp:
             files = ftp.list(FTP_REMOTE_PATH)
-            for file in files:
-                if file.startswith(f"{FTP_REMOTE_PATH}Pedido_AP_"):
-                    ftp.remove(file)
-            print("Cleanup task completed")
+            pedido_files = [f for f in files if f.rsplit('/', 1)[-1].startswith("Pedidos_AP_")]
+
+            max_pedido = 0
+            for file in pedido_files:
+                try:
+                    num = int(file.rsplit('/', 1)[-1].replace("Pedidos_AP_", "").replace(".csv", ""))
+                    if num > max_pedido:
+                        max_pedido = num
+                except ValueError:
+                    pass
+
+            print(f"Max pedido on FTP before cleanup: {max_pedido}")
+            for file in pedido_files:
+                ftp.remove(file)
+            print(f"Cleanup done, deleted {len(pedido_files)} files")
+
+        return max_pedido
     except Exception as e:
         print(f"Error during cleanup: {e}")
         raise
-        
+
+def task_execute_bot(**context):
+    import requests
+    # curl --insecure --request POST --url https://ecoceutics-dev.bbos.services.aquabpi.com/api/instance/execute 
+    # --header 'Content-Type: application/json' 
+    # --data "{'InstanceId':'b71ccef7-959c-421d-b909-71180ae55172',
+    # 'SkillId':'f760bc8e-6c0f-4f49-acf3-2b3e2692d7e9',
+    # 'Password':'ecoceutics',
+    # 'Parameters':[{'Name':'Id','Type':0,'Value':'f5456bfc-f6b8-46e6-85c8-74dd59463a82'}],
+    # 'IsDebug':null,'DeveloperId':null}"
+    try:
+        response = requests.post(
+            "https://ecoceutics-dev.bbos.services.aquabpi.com/api/instance/execute",
+            json={
+                "InstanceId": "b71ccef7-959c-421d-b909-71180ae55172",
+                "SkillId":    "f760bc8e-6c0f-4f49-acf3-2b3e2692d7e9",
+                "Password":   "ecoceutics",
+                "Parameters": [{"Name": "Id", "Type": 0, "Value": "f5456bfc-f6b8-46e6-85c8-74dd59463a82"}],
+                "IsDebug":     None,
+                "DeveloperId": None,
+            },
+            verify=False,
+        )
+        response.raise_for_status()
+        print(f"Bot triggered: {response.status_code} {response.text}")    
+    except Exception as e:
+        print(f"Error executing bot: {e}")
+        raise           
+    
 # ─────────────────────────────────────────────────────────────
 # Task Definitions
 # ─────────────────────────────────────────────────────────────
@@ -563,6 +673,18 @@ cleanup_task = PythonOperator(
     dag=dag,
 )
 
+change_state_logicommerce_task = PythonOperator(
+    task_id='change_state_logicommerce',
+    python_callable=task_notify_logicommerce,
+    dag=dag,
+)
+
+execute_bot_task = PythonOperator(
+    task_id='execute_bot',
+    python_callable=task_execute_bot,
+    dag=dag,
+)
+
 # ─────────────────────────────────────────────────────────────
 # Task Dependencies
 # ─────────────────────────────────────────────────────────────
@@ -578,4 +700,4 @@ extract_orders_task >> transform_orders_task >> extract_order_details_task >> ex
 extract_users_task >> transform_users_task
 extract_order_details_task >> alliance_clients_task
 
-[extract_nif_task, transform_users_task, alliance_clients_task] >> load_task >> cleanup_task >> upload_ftp_task
+[extract_nif_task, transform_users_task, alliance_clients_task] >> load_task >> cleanup_task >> upload_ftp_task >> execute_bot_task >> change_state_logicommerce_task
