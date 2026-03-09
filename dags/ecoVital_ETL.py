@@ -9,6 +9,8 @@ order analysis. Uploads result to FTP.
 from airflow import DAG
 from airflow.models import Variable
 from airflow.providers.standard.operators.python import PythonOperator
+from airflow.hooks.base import BaseHook
+from airflow.models import Variable
 from datetime import datetime, timedelta
 import hashlib
 import base64
@@ -23,27 +25,49 @@ from utils.clsSQL import SQLConnection
 
 
 # ─────────────────────────────────────────────────────────────
-# Configuration
+# Configuration (from Airflow connections & variables)
 # ─────────────────────────────────────────────────────────────
 
-# Variables (to be set in Airflow UI or environment)
-LOGICOMMERCE_API_BASE = Variable.get("logicommerce_api_base")
-LOGICOMMERCE_APP_ID = Variable.get("logicommerce_app_id")
-LOGICOMMERCE_SECRET = Variable.get("logicommerce_secret")  
+def _get_logicommerce_config():
+    conn = BaseHook.get_connection("logicommerce_api")
+    extra = conn.extra_dejson
+    return conn.host, extra["app_id"], extra["secret"]
 
-ECOCEUTICS_API_BASE = Variable.get("ecoceutics_api_base")
-ECOCEUTICS_API_KEY = Variable.get("ecoceutics_api_key")
 
-API_RATE_LIMIT_DELAY = 0.3
+def _get_ecoceutics_config():
+    conn = BaseHook.get_connection("ecoceutics_api")
+    extra = conn.extra_dejson
+    return conn.host, extra["api_key"]
 
-# Connections
-FTP_CONN_ID = "aqua_ftp"
-FTP_REMOTE_PATH = Variable.get("ftp_remote_path", default_var="/")
 
-SSH_CONN_ID = "ssh_tunnel"
-DB_CONN_ID = "fidfarma_db"
+def _get_ssh_config():
+    conn = BaseHook.get_connection("ecovital_ssh")
+    extra = conn.extra_dejson
+    return {
+        "host": conn.host,
+        "port": conn.port,
+        "user": conn.login,
+        "password": conn.password or None,
+        "key_file": extra.get("key_file"),
+    }
 
-TAX_MAPPING = Variable.get("ecovital_tax_mapping", deserialize_json=True, default_var={})
+
+def _get_db_config():
+    conn = BaseHook.get_connection("ecovital_db")
+    return {
+        "host": conn.host,
+        "port": conn.port,
+        "user": conn.login,
+        "password": conn.password,
+        "database": conn.schema,
+    }
+
+
+API_RATE_LIMIT_DELAY = float(Variable.get("ecovital_api_rate_limit", default_var="0.3"))
+OUTPUT_PATH = Variable.get("ecovital_output_path", default_var="/opt/airflow/dags/output/EcoVital_FactTable.csv")
+FTP_CONN_ID = "alloga_ftp"
+FTP_REMOTE_PATH = Variable.get("ecovital_ftp_remote_path", default_var="fichero/EcoVital_FactTable.csv")
+TAX_MAPPING = json.loads(Variable.get("ecovital_tax_mapping", default_var='{"1": 21, "2": 10, "3": 4}'))
 
 default_args = {
     'owner': 'data-team',
@@ -70,12 +94,12 @@ def create_sha256_token(secret: str) -> str:
     return base64.b64encode(digest).decode("utf-8")
 
 
-def build_logicommerce_headers(token: str) -> dict:
+def build_logicommerce_headers(token: str, app_id: str) -> dict:
     return {
         "Accept": "application/json",
         "Authorization": f"Basic {token}",
         "countryCode": "ES",
-        "appid": LOGICOMMERCE_APP_ID
+        "appid": app_id
     }
 
 
@@ -133,8 +157,9 @@ def normalize_billing_item(item) -> dict:
 # ─────────────────────────────────────────────────────────────
 
 def fetch_logicommerce_paginated(token: str, endpoint: str, key: str) -> dict:
-    headers = build_logicommerce_headers(token)
-    url = f"{LOGICOMMERCE_API_BASE}/{endpoint}"
+    api_base, app_id, _ = _get_logicommerce_config()
+    headers = build_logicommerce_headers(token, app_id)
+    url = f"{api_base}/{endpoint}"
     all_items = []
     page = 1
 
@@ -163,8 +188,9 @@ def fetch_logicommerce_orders(token: str) -> dict:
 
 
 def fetch_logicommerce_order_detail(token: str, order_number: str) -> dict:
-    url = f"{LOGICOMMERCE_API_BASE}/orders/{order_number}"
-    response = requests.get(url, headers=build_logicommerce_headers(token))
+    api_base, app_id, _ = _get_logicommerce_config()
+    url = f"{api_base}/orders/{order_number}"
+    response = requests.get(url, headers=build_logicommerce_headers(token, app_id))
     response.raise_for_status()
     return response.json()
 
@@ -174,7 +200,8 @@ def fetch_logicommerce_users(token: str) -> dict:
 
 
 def fetch_ecoceutics_fid(nif: str) -> dict:
-    url = f"{ECOCEUTICS_API_BASE}/unit/{nif}/fid/?api_key={ECOCEUTICS_API_KEY}"
+    api_base, api_key = _get_ecoceutics_config()
+    url = f"{api_base}/unit/{nif}/fid/?api_key={api_key}"
     response = requests.get(url, headers=build_ecoceutics_headers())
     response.raise_for_status()
     return response.json()
@@ -185,42 +212,25 @@ def fetch_ecoceutics_fid(nif: str) -> dict:
 # ─────────────────────────────────────────────────────────────
 
 def make_tunnel():
-    try:
-        from airflow.hooks.base import BaseHook
-        conn = BaseHook.get_connection(SSH_CONN_ID)
-        extra = conn.extra_dejson
-        key_file = extra.get('key_file')
-        key_content = open(key_file).read() if key_file else None
-        return SSHTunnel(
-            ssh_host=conn.host,
-            ssh_port=conn.port or 22,
-            ssh_username=conn.login,
-            ssh_password=conn.password or None,
-            ssh_private_key=key_content,
-            remote_host=extra.get('remote_host', '127.0.0.1'),
-            remote_port=int(extra.get('remote_port', 3306)),
-        )
-    except Exception as e:
-        print(f"SSH Tunnel error: {e}")
-        raise
+    ssh = _get_ssh_config()
+    db = _get_db_config()
+    key_file = ssh["key_file"]
+    key_content = open(key_file).read() if key_file else None
+    return SSHTunnel(
+        ssh_host=ssh["host"], ssh_port=ssh["port"], ssh_username=ssh["user"],
+        ssh_password=ssh["password"], ssh_private_key=key_content,
+        remote_host=db["host"], remote_port=db["port"],
+    )
 
 
 def make_db(tunnel):
-    try:
-        from airflow.hooks.base import BaseHook
-        conn = BaseHook.get_connection(DB_CONN_ID)
-        return SQLConnection(
-            db_host=conn.host,
-            db_port=conn.port or 3306,
-            db_database=conn.schema,
-            db_username=conn.login,
-            db_password=conn.password,
-            dialect="mysql", driver="pymysql",
-            ssh_tunnel=tunnel,
-        )
-    except Exception as e:
-        print(f"DB connection error: {e}")
-        raise
+    db = _get_db_config()
+    return SQLConnection(
+        db_host=db["host"], db_port=db["port"], db_database=db["database"],
+        db_username=db["user"], db_password=db["password"],
+        dialect="mysql", driver="pymysql",
+        ssh_tunnel=tunnel,
+    )
 
 
 def query_units_by_nifs(nif_list: list) -> pd.DataFrame:
@@ -348,7 +358,8 @@ def apply_final_column_mapping(df: pd.DataFrame) -> pd.DataFrame:
 # ─────────────────────────────────────────────────────────────
 
 def task_generate_token(**context):
-    return create_sha256_token(LOGICOMMERCE_SECRET)
+    _, _, secret = _get_logicommerce_config()
+    return create_sha256_token(secret)
 
 
 def task_extract_orders(**context):
@@ -421,8 +432,9 @@ def task_alliance_clients(**context):
     if not pedidos:
         print("No orders to query")
         return []
-    if not SSH_CONN_ID:
-        print("SKIP - SSH_CONN_ID not configured")
+    ssh = _get_ssh_config()
+    if not ssh["host"]:
+        print("SKIP - ecovital_ssh connection not configured")
         return []
 
     pedidos_df = pd.DataFrame(pedidos)
@@ -700,4 +712,4 @@ extract_orders_task >> transform_orders_task >> extract_order_details_task >> ex
 extract_users_task >> transform_users_task
 extract_order_details_task >> alliance_clients_task
 
-[extract_nif_task, transform_users_task, alliance_clients_task] >> load_task >> cleanup_task >> upload_ftp_task >> execute_bot_task >> change_state_logicommerce_task
+[extract_nif_task, transform_users_task, alliance_clients_task] >> load_task >> upload_ftp_task

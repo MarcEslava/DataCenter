@@ -1,7 +1,7 @@
-from utils.clsSQL import SQLConnection
-from utils.clsSSHTunnel import SSHTunnel
-from utils.ftp import FTPConn
-from utils.debug import Debug
+from .clsSQL import SQLConnection
+from .clsSSHTunnel import SSHTunnel
+from .ftp import FTPConn
+from .debug import Debug
 
 __all__ = [
     "SQLConnection",

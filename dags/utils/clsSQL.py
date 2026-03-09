@@ -307,6 +307,33 @@ class SQLConnection:
         except Exception as e:
             print(f"Error fetching data from '{table_name}': {e}")
         return table_df
+
+    def upload_dataframe(self, df: pd.DataFrame, table_name, if_exists='replace', index=False):
+        """Upload a DataFrame to a specified table"""
+        import pandas as pd
+        try:
+            with self.engine.begin() as conn:
+                df.to_sql(
+                    name=table_name,
+                    con=conn,
+                    if_exists=if_exists,
+                    index=index
+                )
+            print(f"Data uploaded to table '{table_name}' successfully.")
+        except Exception as e:
+            print(f"Error uploading data to table '{table_name}': {e}")
+            raise
+    def fech_dataframe(self, query):
+        """Fetch data from a query into a DataFrame"""
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(text(query))
+                rows = result.fetchall()
+                df = pd.DataFrame(rows, columns=result.keys())
+                return df
+        except Exception as e:
+            print(f"Error fetching data: {e}")
+            raise
     
     def close(self):
         """Close database resources"""

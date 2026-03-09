@@ -1,4 +1,4 @@
-.gitignore# Environment and secrets
+# Environment and secrets
 
 .env
 
@@ -23,6 +23,8 @@ secrets/
 # Python
 
 __pycache__/
+
+**/__pycache__/
 
 *.py[cod]
 
@@ -146,7 +148,15 @@ data/
 
 *.cache
 
+# Output files
+
 *.xlsx
+
+*.csv
+
+tets.json
+
+output/**/*.json
 
 # Secrets
 
@@ -168,7 +178,9 @@ tests/
 
 output/
 
-bitbucket-pipelines.yml
+# Local scripts (not for repo)
+
+*.ps1
 
 # Airflow
 
@@ -176,9 +188,9 @@ logs/
 
 airflow.db
 
-airflow.cfg.local
+airflow.cfg
 
-webserver_config.py.local
+webserver_config.py
 
 dags/tests/__pycache__/
 
@@ -205,11 +217,3 @@ conf/httpd_conf/
 TEST*.xml
 
 test-results/
-
-airflow.cfg
-
-webserver_config.py
-
-# Docker
-
-*.log
