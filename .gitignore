@@ -1,114 +1,215 @@
 # Environment and secrets
+
 .env
+
 .env.local
+
 .env.*.local
+
 secrets/
+
 *.pem
+
 *.key
+
 *.crt
+
 *.jks
+
 *_creds
 
+*.backup
+
 # Python
+
 __pycache__/
+
 **/__pycache__/
+
 *.py[cod]
+
 *$py.class
+
 *.so
-*.pyo
-*.egg-info/
-*.egg
-dist/
-build/
+
 .Python
+
 .venv/
+
 venv/
+
 ENV/
+
 env/
+
+*.pyo
+
+*.egg-info/
+
+*.egg
+
+dist/
+
+build/
+
 .pytest_cache/
+
 .coverage
+
 htmlcov/
 
-# Virtual environment (local venv in project root)
-Include/
-Lib/
-Scripts/
-pyvenv.cfg
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.project
-.classpath
-.settings/
-
-# OS
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-
 # Java
+
 *.class
+
 *.jar
+
 *.war
+
 target/
 
 # Node
+
 node_modules/
+
 npm-debug.log*
+
 yarn-debug.log*
+
 yarn-error.log*
 
+# Virtual environment (local venv in project root)
+
+Include/
+
+Lib/
+
+Scripts/
+
+pyvenv.cfg
+
+# IDEs
+
+.idea/
+
+# IDE
+
+.vscode/
+
+.idea/
+
+*.swp
+
+*.swo
+
+*~
+
+.project
+
+.classpath
+
+.settings/
+
+# OS
+
+.DS_Store
+
+.DS_Store?
+
+._*
+
+.Spotlight-V100
+
+.Trashes
+
+Thumbs.db
+
+ehthumbs.db
+
+Desktop.ini
+
 # Logs
+
 *.log
+
 logs/
+
 *.log.*
 
 # Data and temporary files
+
 data/
+
 *.tmp
+
 *.bak
+
 *.backup
+
 *.cache
 
 # Output files
+
 *.xlsx
+
 *.csv
+
+# Secrets
+
+secrets/
+
+.env
+
+*.pem
+
+*.key
+
+# Docker
+
+.dockerignore
+
+# test/  Output / cache
+
+tests/
+
 output/
 
 # Local scripts (not for repo)
+
 *.ps1
 
-# test / cache
-tests/
-
 # Airflow
+
+logs/
+
 airflow.db
+
 airflow.cfg
+
 webserver_config.py
 
-# Docker
-.dockerignore
+dags/tests/__pycache__/
 
 # Apache HTTPD
+
 conf/httpd_conf/
 
 # Large media files
+
 *.mp4
+
 *.tiff
+
 *.avi
+
 *.flv
+
 *.mov
+
 *.wmv
 
 # Test reports
+
 TEST*.xml
+
 test-results/
