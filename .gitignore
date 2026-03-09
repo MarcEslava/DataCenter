@@ -146,6 +146,8 @@ data/
 
 *.cache
 
+*.xlsx
+
 # Secrets
 
 secrets/

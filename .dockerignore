@@ -33,6 +33,7 @@ build/
 data/
 logs/
 *.log
+*.xlsx
 
 # Secrets (should not be in image)
 secrets/
