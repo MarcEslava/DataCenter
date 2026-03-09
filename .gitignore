@@ -29,6 +29,9 @@ secrets/
 *.pem
 *.key
 
+# Local scripts (not for repo)
+*.ps1
+
 # test/  Output / cache
 tests/
 
