@@ -111,6 +111,16 @@ CONNECTIONS = [
             "redirect_uri": env("ZOHO_REDIRECT_URI"),
         }),
     ),
+    Connection(
+        conn_id="zepto_mail",
+        conn_type="http",
+        host="api.zeptomail.eu",
+        schema="https",
+        password=env("ZEPTO_API_KEY"),
+        extra=json.dumps({
+            "from_address": env("ZEPTO_FROM_ADDRESS", "noreply@ecoceutics.net"),
+        }),
+    ),
 ]
 
 

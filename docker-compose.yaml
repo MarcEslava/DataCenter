@@ -193,6 +193,7 @@ services:
     healthcheck:
       <<: *healthcheck-defaults
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+    deploy: *deploy-medium
 
   apiserver:
     <<: *airflow-common
@@ -284,6 +285,7 @@ services:
     working_dir: /work/projects
     tty: true
     stdin_open: true
+    deploy: *deploy-medium
     command: sleep infinity
     networks: [confluent]
     environment:
