@@ -3,8 +3,8 @@ x-common: &common
   restart: unless-stopped
   networks: [confluent]
   extra_hosts:
-  - "cecobd1-int.ecoceutics.com:${CECO_DB1_IP}"
-  - "cecobd2-int.ecoceutics.com:${CECO_DB2_IP}"
+    - "cecobd1-int.ecoceutics.com:${CECO_DB1_IP}"
+    - "cecobd2-int.ecoceutics.com:${CECO_DB2_IP}"
 
 x-healthcheck: &healthcheck-defaults
   interval: 10s
@@ -19,14 +19,13 @@ x-deploy-small: &deploy-small
 
 x-deploy-medium: &deploy-medium
   resources:
-    limits: { cpus: '2', memory: 4G }
+    limits: { cpus: '2', memory: 2G }
     reservations: { cpus: '0.5', memory: 1G }
 
 x-airflow-common: &airflow-common
   <<: *common
   image: apache/airflow:3.0.1
   environment: &airflow-common-env
-    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-microsoft-mssql pymssql"
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:-this_is_a_very_secured_key_change_in_production}
@@ -36,13 +35,10 @@ x-airflow-common: &airflow-common
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:-jpI3a/LHtBgnJZ8KUx90zg==}
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__LOGGING__LOGGING_LEVEL: ERROR
-    AIRFLOW__WEBSERVER__LOG_FETCH_TIMEOUT_SEC: "15"
     AIRFLOW__WEBSERVER__BASE_URL: http://datahub.local/airflow
     FORWARDED_ALLOW_IPS: "*"
   volumes:
     - ./dags:/opt/airflow/dags
-    - ./setup_airflow_connections.py:/opt/airflow/setup_airflow_connections.py:ro
-    - ./.env:/opt/airflow/.env:ro
   depends_on:
     - postgres
 
@@ -91,7 +87,11 @@ services:
       OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
       KAFKA_JMX_PORT: 9101
       KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
-      KAFKA_METRIC_REPORTERS: ""  # disabled — no ConfluentMetricsReporter loaded
+      KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
+      CONFLUENT_METRICS_ENABLE: "true"
+      CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: broker:29092
+      CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: "1"   # single-broker cluster
+      CONFLUENT_METRICS_REPORTER_TOPIC_CREATE: "true"  # auto-create _confluent-metrics
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,EXTERNAL://kafka.ecoceutics.com:9092
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/jaas.conf -Dzookeeper.sasl.client=true -Dzookeeper.sasl.client.username=kafka"
       CONFLUENT_CRUISE_CONTROL_ENABLE: "false"
@@ -193,7 +193,6 @@ services:
     healthcheck:
       <<: *healthcheck-defaults
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
-    deploy: *deploy-medium
 
   apiserver:
     <<: *airflow-common
@@ -210,8 +209,6 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./conf/airflow.cfg:/airflow.cfg
-      - ./setup_airflow_connections.py:/opt/airflow/setup_airflow_connections.py:ro
-      - ./.env:/opt/airflow/.env:ro
     ports: ["8080:8080"]
   reverse-proxy:
     image: httpd:2.4-alpine
@@ -252,8 +249,8 @@ services:
       SPARK_MASTER_HOST: spark-master
       SPARK_MASTER_PORT: 7077
       SPARK_MASTER_WEBUI_PORT: 8080
-      SPARK_MASTER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.reverseProxyUrl=${SPARK_UI_REVERSE_PROXY_URL:-http://datahub.local/spark}"
-      SPARK_PUBLIC_DNS: ${SPARK_PUBLIC_DNS:-datahub.local}
+      SPARK_MASTER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
+      SPARK_PUBLIC_DNS: datahub.local
       SPARK_NO_DAEMONIZE: "true"
       SPARK_LOG_LEVEL: ERROR
     ports: ["9090:8080", "7077:7077"]
@@ -267,10 +264,10 @@ services:
       spark-master: { condition: service_started }
     environment:
       SPARK_MODE: worker
-      SPARK_WORKER_CORES: 1
+      SPARK_WORKER_CORES: 2
       SPARK_WORKER_MEMORY: 1g
       SPARK_MASTER_URL: spark://spark-master:7077
-      SPARK_WORKER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.reverseProxyUrl=${SPARK_UI_REVERSE_PROXY_URL:-http://datahub.local/spark}"
+      SPARK_WORKER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
       SPARK_WORKER_HOST: spark-worker
       SPARK_WORKER_WEBUI_PORT: 8081
       SPARK_LOG_LEVEL: ERROR
@@ -285,7 +282,6 @@ services:
     working_dir: /work/projects
     tty: true
     stdin_open: true
-    deploy: *deploy-medium
     command: sleep infinity
     networks: [confluent]
     environment:
