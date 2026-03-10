@@ -75,6 +75,7 @@ def novedades_sku_pharma_etl():
         from time import sleep
         from airflow.hooks.base import BaseHook
         from utils.clsZohoInput import ZohoTokenManager, ZohoCRMConnector
+        import pandas as pd
 
         conn = BaseHook.get_connection(ZOHO_CONN_ID)
         extra = conn.extra_dejson
@@ -94,7 +95,9 @@ def novedades_sku_pharma_etl():
             sleep(0.3)
         grouped = {}
         owners = {}  # client_name -> set of unique owner emails with their info
-
+        test_vendors = pd.DataFrame(all_vendors)
+        print(f"Extracted {len(test_vendors)} vendors from Zoho with columns: {test_vendors.columns.tolist()}")
+        print(f"Sample vendor data: {test_vendors.head()}")
         for v in all_vendors:
             if v.get("Tipo_Acuerdo") == "Obligatorio" or v.get("Tipo_Acuerdo") == "Opcional":
                 client_name = v.get("Client_Name", "Unknown Client")
@@ -257,6 +260,7 @@ def novedades_sku_pharma_etl():
             acords_df['laboratori'] = acords_df['Laboratori'].str.strip().str.lower()
             mapped = pd.merge(vendors_df, acords_df, on='laboratori', how='inner')
             print(f"[{client_name}] Mapped {len(mapped)} vendors with acords")
+            print(f"[{client_name}] Mapped data columns: {mapped.head()}")
             return {
                 "client_name": client_name,
                 "mapped": mapped.to_dict('records'),
