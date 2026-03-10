@@ -118,6 +118,7 @@ def novedades_sku_pharma_etl():
             for name, vendors in grouped.items()
         ]
         print(f"Split into {len(clients)} clients: {[c['client_name'] for c in clients]}")
+        print(f"Extracted client data with columns: {clients[0]['vendors'][0].keys() if clients else []}")
         return clients
 
     # ── 2. Extract products (once for all clients) ──────────────
@@ -220,6 +221,7 @@ def novedades_sku_pharma_etl():
             products_df = products_df.drop(columns=drop_cols)
 
             print(f"Extracted {len(act_df)} current + {len(ant_df)} previous year rows -> {len(products_df)} merged")
+            print("Extracted products data with columns:", products_df.columns.tolist())
             return products_df.to_dict('records')
         except Exception as e:
             print(f"Error extracting products: {e}")
@@ -234,6 +236,7 @@ def novedades_sku_pharma_etl():
         for col in df.select_dtypes(include=["datetime", "datetimetz", "Timestamp"]).columns:
             df[col] = df[col].astype(str)
         print(f"Extracted {len(df)} rows from VendorMapping")
+        print("Extracted acordes data with columns:", df.columns.tolist())
         return df.to_dict('records')
 
     # ── 4. Per-client pipeline (runs in parallel) ─────────────
