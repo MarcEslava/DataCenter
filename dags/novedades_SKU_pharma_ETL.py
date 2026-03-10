@@ -252,9 +252,9 @@ def novedades_sku_pharma_etl():
             client_name = client_data["client_name"]
             vendors_df = pd.json_normalize(client_data["vendors"])
             acords_df = pd.DataFrame(all_acords)
-            vendors_df = vendors_df.rename(columns={'vendor_name': 'laboratori'})
+            vendors_df = vendors_df.rename(columns={'Vendor_Name': 'laboratori'})
             vendors_df['laboratori'] = vendors_df['laboratori'].str.strip().str.lower()
-            acords_df['laboratori'] = acords_df['laboratorio'].str.strip().str.lower()
+            acords_df['laboratori'] = acords_df['Laboratori'].str.strip().str.lower()
             mapped = pd.merge(vendors_df, acords_df, on='laboratori', how='inner')
             print(f"[{client_name}] Mapped {len(mapped)} vendors with acords")
             return {
