@@ -34,7 +34,7 @@ LOGICOMMERCE_SECRET = Variable.get("logicommerce_secret")
 ECOCEUTICS_API_BASE = Variable.get("ecoceutics_api_base")
 ECOCEUTICS_API_KEY = Variable.get("ecoceutics_api_key")
 
-API_RATE_LIMIT_DELAY = Variable.get("api_rate_limit_delay", default_var=1)  # seconds between API calls to avoid rate limits
+API_RATE_LIMIT_DELAY =float(Variable.get("api_rate_limit_delay", default_var=1))  # seconds between API calls to avoid rate limits
 
 # Connections
 FTP_CONN_ID = "aqua_ftp"
