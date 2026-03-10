@@ -118,6 +118,7 @@ def novedades_sku_pharma_etl():
             for name, vendors in grouped.items()
         ]
         print(f"Split into {len(clients)} clients: {[c['client_name'] for c in clients]}")
+        print(f"Extracted client data with columns: {clients[0]['vendors'][0].keys() if clients else []}")
         return clients
 
     # ── 2. Extract products (once for all clients) ──────────────
@@ -220,6 +221,7 @@ def novedades_sku_pharma_etl():
             products_df = products_df.drop(columns=drop_cols)
 
             print(f"Extracted {len(act_df)} current + {len(ant_df)} previous year rows -> {len(products_df)} merged")
+            print("Extracted products data with columns:", products_df.columns.tolist())
             return products_df.to_dict('records')
         except Exception as e:
             print(f"Error extracting products: {e}")
@@ -231,9 +233,10 @@ def novedades_sku_pharma_etl():
         """Extract the vendor-to-lab mapping table from BI. Runs ONCE."""
         df = _query_sql(SQL_ACORDS_CONN_ID, "SELECT * FROM VendorMapping", dialect="mysql")
         # Convert datetime columns to ISO strings so XCom can serialize them
-        for col in df.select_dtypes(include=["datetime", "datetimetz"]).columns:
+        for col in df.select_dtypes(include=["datetime", "datetimetz", "Timestamp"]).columns:
             df[col] = df[col].astype(str)
         print(f"Extracted {len(df)} rows from VendorMapping")
+        print("Extracted acordes data with columns:", df.columns.tolist())
         return df.to_dict('records')
 
     # ── 4. Per-client pipeline (runs in parallel) ─────────────
@@ -251,7 +254,7 @@ def novedades_sku_pharma_etl():
             acords_df = pd.DataFrame(all_acords)
             vendors_df = vendors_df.rename(columns={'vendor_name': 'Laboratori'})
             vendors_df['Laboratori'] = vendors_df['Laboratori'].str.strip().str.lower()
-            acords_df['Laboratori'] = acords_df['Laboratori'].str.strip().str.lower()
+            acords_df['Laboratori'] = acords_df['Laboratorio'].str.strip().str.lower()
             mapped = pd.merge(vendors_df, acords_df, on='Laboratori', how='inner')
             print(f"[{client_name}] Mapped {len(mapped)} vendors with acords")
             return {
@@ -399,8 +402,6 @@ def novedades_sku_pharma_etl():
     acords = extract_acords()
     expanded = process_client.partial(all_products=products, all_acords=acords).expand(client_data=clients)
     expanded >> notify_categories()
-
-
 
 # Instantiate the DAG
 novedades_sku_pharma_etl()
