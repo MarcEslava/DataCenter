@@ -254,7 +254,7 @@ def novedades_sku_pharma_etl():
             acords_df = pd.DataFrame(all_acords)
             vendors_df = vendors_df.rename(columns={'vendor_name': 'Laboratori'})
             vendors_df['Laboratori'] = vendors_df['Laboratori'].str.strip().str.lower()
-            acords_df['Laboratori'] = acords_df['Laboratori'].str.strip().str.lower()
+            acords_df['Laboratori'] = acords_df['Laboratorio'].str.strip().str.lower()
             mapped = pd.merge(vendors_df, acords_df, on='Laboratori', how='inner')
             print(f"[{client_name}] Mapped {len(mapped)} vendors with acords")
             return {
@@ -402,8 +402,6 @@ def novedades_sku_pharma_etl():
     acords = extract_acords()
     expanded = process_client.partial(all_products=products, all_acords=acords).expand(client_data=clients)
     expanded >> notify_categories()
-
-
 
 # Instantiate the DAG
 novedades_sku_pharma_etl()
