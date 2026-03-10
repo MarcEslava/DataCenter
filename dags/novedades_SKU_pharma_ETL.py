@@ -26,23 +26,28 @@ MAIL_RECIPIENTS = ["afochez@ecoceutics.com", "phojas@ecoceutcis.com", "apirretas
 # DB helpers
 # ─────────────────────────────────────────────────────────────
 
-def _query_mssql(conn_id: str, sql: str):
-    """Run a SQL query. Port forwarding is managed at the OS level."""
+_DIALECT_DEFAULTS = {
+    "mssql": {"driver": "pymssql", "port": 1433},
+    "mysql": {"driver": "pymysql",  "port": 3306},
+}
+
+def _query_sql(conn_id: str, sql: str, dialect: str):
+    """Run a query using the given dialect (mssql/mysql)."""
     from airflow.hooks.base import BaseHook
     from utils.clsSQL import SQLConnection
     conn = BaseHook.get_connection(conn_id)
+    defaults = _DIALECT_DEFAULTS[dialect]
     db = SQLConnection(
         db_host=conn.host,
-        db_port=conn.port or 1433,
+        db_port=conn.port or defaults["port"],
         db_database=conn.schema,
         db_username=conn.login,
         db_password=conn.password,
-        dialect="mssql",
-        driver="pymssql",
+        dialect=dialect,
+        driver=defaults["driver"],
     )
     with db:
         return db.fech_dataframe(sql)
-
 
 # ─────────────────────────────────────────────────────────────
 # DAG
@@ -224,7 +229,7 @@ def novedades_sku_pharma_etl():
     @task
     def extract_acords() -> list[dict]:
         """Extract the vendor-to-lab mapping table from BI. Runs ONCE."""
-        df = _query_mssql(SQL_ACORDS_CONN_ID, "SELECT * FROM VendorMapping")
+        df = _query_sql(SQL_ACORDS_CONN_ID, "SELECT * FROM VendorMapping", dialect="mysql")
         print(f"Extracted {len(df)} rows from VendorMapping")
         return df.to_dict('records')
 
