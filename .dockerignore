@@ -1,0 +1,66 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+README
+docs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+
+# Data and logs
+data/
+logs/
+*.log
+*.xlsx
+
+# Secrets (should not be in image)
+secrets/
+*.pem
+*.key
+*.crt
+*.jks
+
+# Docker
+Dockerfile*
+docker-compose*.yaml
+.dockerignore
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Airflow
+airflow.cfg
+webserver_config.py
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
