@@ -1,11 +1,7 @@
-# ─────────────────────────────────────────────────────────────
-# YAML Anchors - Reusable blocks to reduce redundancy
-# ─────────────────────────────────────────────────────────────
 
 x-common: &common
   restart: unless-stopped
   networks: [confluent]
-  # Add extra_hosts to resolve internal hostnames for services that need to connect to external resources
   extra_hosts:
   - "cecobd1-int.ecoceutics.com:${CECO_DB1_IP}"
   - "cecobd2-int.ecoceutics.com:${CECO_DB2_IP}"
@@ -19,6 +15,7 @@ x-deploy-small: &deploy-small
   resources:
     limits: { cpus: '1', memory: 1G }
     reservations: { cpus: '0.25', memory: 512M }
+    
 
 x-deploy-medium: &deploy-medium
   resources:
@@ -29,15 +26,23 @@ x-airflow-common: &airflow-common
   <<: *common
   image: apache/airflow:3.0.1
   environment: &airflow-common-env
+    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-microsoft-mssql pymssql"
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:-this_is_a_very_secured_key_change_in_production}
+    AIRFLOW__CORE__INTERNAL_API_SECRET_KEY: ${AIRFLOW_INTERNAL_API_SECRET_KEY:-NOmmb1RlQ6e+rFHGLPzgng==}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-OXdEIRar9V1kjsXKMv4v63_37n3uUsHHaOyvw0xtqLs=}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-tcDqV0CAB6yubbpSpxjdIA==}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:-jpI3a/LHtBgnJZ8KUx90zg==}
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__LOGGING__LOGGING_LEVEL: ERROR
+    AIRFLOW__WEBSERVER__LOG_FETCH_TIMEOUT_SEC: "15"
     AIRFLOW__WEBSERVER__BASE_URL: http://datahub.local/airflow
     FORWARDED_ALLOW_IPS: "*"
   volumes:
     - ./dags:/opt/airflow/dags
+    - ./setup_airflow_connections.py:/opt/airflow/setup_airflow_connections.py:ro
+    - ./.env:/opt/airflow/.env:ro
   depends_on:
     - postgres
 
@@ -90,7 +95,9 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,EXTERNAL://kafka.ecoceutics.com:9092
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/jaas.conf -Dzookeeper.sasl.client=true -Dzookeeper.sasl.client.username=kafka"
       CONFLUENT_CRUISE_CONTROL_ENABLE: "false"
-      KAFKA_LOG4J_ROOT_LOGLEVEL: ERROR
+      CONFLUENT_TELEMETRY_ENABLED: "false"
+      KAFKA_LOG4J_ROOT_LOGLEVEL: FATAL
+      KAFKA_LOG4J_LOGGERS: "kafka.coordinator.group=FATAL,kafka.server.ZkAdminManager=FATAL,kafka.controller=FATAL"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
     volumes:
@@ -140,6 +147,7 @@ services:
       CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_REPLICATION: 1
       CONTROL_CENTER_METRICS_TOPIC_REPLICATION: 1
       CONTROL_CENTER_LOG4J_ROOT_LOGLEVEL: ERROR
+      CONFLUENT_TELEMETRY_ENABLED: "false"
     deploy: *deploy-medium
   connect:
     <<: *common
@@ -185,6 +193,7 @@ services:
     healthcheck:
       <<: *healthcheck-defaults
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+    deploy: *deploy-medium
 
   apiserver:
     <<: *airflow-common
@@ -201,6 +210,8 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./conf/airflow.cfg:/airflow.cfg
+      - ./setup_airflow_connections.py:/opt/airflow/setup_airflow_connections.py:ro
+      - ./.env:/opt/airflow/.env:ro
     ports: ["8080:8080"]
   reverse-proxy:
     image: httpd:2.4-alpine
@@ -213,9 +224,10 @@ services:
   scheduler:
     <<: *airflow-common
     command: bash -lc "exec airflow scheduler"
+    hostname: scheduler
     environment:
       <<: *airflow-common-env
-      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://apiserver:8080/execution/
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
     deploy: *deploy-medium
 
@@ -224,7 +236,7 @@ services:
     command: bash -lc "exec airflow dag-processor"
     environment:
       <<: *airflow-common-env
-      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://apiserver:8080/execution/
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
     deploy:
       resources:
@@ -240,8 +252,8 @@ services:
       SPARK_MASTER_HOST: spark-master
       SPARK_MASTER_PORT: 7077
       SPARK_MASTER_WEBUI_PORT: 8080
-      SPARK_MASTER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
-      SPARK_PUBLIC_DNS: datahub.local
+      SPARK_MASTER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.reverseProxyUrl=${SPARK_UI_REVERSE_PROXY_URL:-http://datahub.local/spark}"
+      SPARK_PUBLIC_DNS: ${SPARK_PUBLIC_DNS:-datahub.local}
       SPARK_NO_DAEMONIZE: "true"
       SPARK_LOG_LEVEL: ERROR
     ports: ["9090:8080", "7077:7077"]
@@ -258,7 +270,7 @@ services:
       SPARK_WORKER_CORES: 1
       SPARK_WORKER_MEMORY: 1g
       SPARK_MASTER_URL: spark://spark-master:7077
-      SPARK_WORKER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.proxyBase=/spark"
+      SPARK_WORKER_OPTS: "-Dspark.ui.reverseProxy=true -Dspark.ui.reverseProxyUrl=${SPARK_UI_REVERSE_PROXY_URL:-http://datahub.local/spark}"
       SPARK_WORKER_HOST: spark-worker
       SPARK_WORKER_WEBUI_PORT: 8081
       SPARK_LOG_LEVEL: ERROR
@@ -268,17 +280,19 @@ services:
         reservations: { cpus: '0.5', memory: 512M }
   
   python-master:
-    image: python-master
-    build: .
-    working_dir: /work
+    image: python:3.11.2-slim
+    restart: unless-stopped
+    working_dir: /work/projects
     tty: true
     stdin_open: true
-    volumes:
-      - ./apps:/work/apps
-      - ./data:/work/data
-      - spark_checkpoint:/work/checkpoint
-      - ~/.ssh:/home/app/.ssh:ro
+    deploy: *deploy-medium
+    command: sleep infinity
     networks: [confluent]
+    environment:
+      GIT_SSH_COMMAND: "ssh -o StrictModes=no"
+    volumes:
+      - .:/work/projects
+      - ~/.ssh:/root/.ssh:ro
 
   mongo:
     <<: *common
@@ -301,4 +315,3 @@ volumes:
 
 networks:
   confluent:
-
