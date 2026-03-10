@@ -231,7 +231,7 @@ def novedades_sku_pharma_etl():
         """Extract the vendor-to-lab mapping table from BI. Runs ONCE."""
         df = _query_sql(SQL_ACORDS_CONN_ID, "SELECT * FROM VendorMapping", dialect="mysql")
         # Convert datetime columns to ISO strings so XCom can serialize them
-        for col in df.select_dtypes(include=["datetime", "datetimetz"]).columns:
+        for col in df.select_dtypes(include=["datetime", "datetimetz", "Timestamp"]).columns:
             df[col] = df[col].astype(str)
         print(f"Extracted {len(df)} rows from VendorMapping")
         return df.to_dict('records')
