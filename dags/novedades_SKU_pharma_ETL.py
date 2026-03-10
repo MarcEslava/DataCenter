@@ -33,12 +33,12 @@ def _query_mssql(conn_id: str, sql: str):
     conn = BaseHook.get_connection(conn_id)
     db = SQLConnection(
         db_host=conn.host,
-        db_port=conn.port or 1433,
+        db_port=conn.port or 3306,
         db_database=conn.schema,
         db_username=conn.login,
         db_password=conn.password,
-        dialect="mssql",
-        driver="pymssql",
+        dialect="mysql",
+        driver="pymysql",
     )
     with db:
         return db.fech_dataframe(sql)
