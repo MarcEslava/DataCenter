@@ -526,6 +526,7 @@ def notify_logicommerce_order_status(token: str, order_number: str, state: int =
     )
     getid_response.raise_for_status()
     internal_id = getid_response.json()["ID"]
+    sleep(API_RATE_LIMIT_DELAY)
 
     # Change state using the internal ID
     response = requests.put(
@@ -554,8 +555,11 @@ def task_notify_logicommerce(**context):
             notify_logicommerce_order_status(token, order_number, state=2)
             sleep(API_RATE_LIMIT_DELAY)
         except requests.HTTPError as e:
-            print(f"  Order {order_number}: FAILED ({e.response.status_code} - {e.response.text})")
-            failed.append(order_number)
+            if e.response.status_code == 400 and "TLG014130" in e.response.text:
+                print(f"  Order {order_number}: already in_process, skipping")
+            else:
+                print(f"  Order {order_number}: FAILED ({e.response.status_code} - {e.response.text})")
+                failed.append(order_number)
 
     if failed:
         raise RuntimeError(f"Failed to notify LogiCommerce for orders: {failed}")
