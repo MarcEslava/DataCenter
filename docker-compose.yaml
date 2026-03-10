@@ -2,8 +2,8 @@ x-common: &common
   restart: unless-stopped
   networks: [confluent]
   extra_hosts:
-    - "cecobd1-int.ecoceutics.com:${CECO_DB1_IP}"
-    - "cecobd2-int.ecoceutics.com:${CECO_DB2_IP}"
+    - "cecobd1-int.ecoceutics.com:10.20.10.4"
+    - "cecobd2-int.ecoceutics.com:10.20.10.6"
 
 x-healthcheck: &healthcheck-defaults
   interval: 10s
