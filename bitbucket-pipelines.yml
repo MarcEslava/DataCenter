@@ -9,5 +9,3 @@ pipelines:
           script:
             - chmod +x ./call_remote_hook_deploy.sh
             - ./call_remote_hook_deploy.sh --url "$HOOK_DEPLOY_URL" --hook "$HOOK_DEPLOY_NAME" --secret "$HOOK_DEPLOY_SECRET"
-
-
