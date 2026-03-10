@@ -52,14 +52,10 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-      ZOOKEEPER_AUTH_PROVIDER_SASL: org.apache.zookeeper.server.auth.SASLAuthenticationProvider
-      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/zookeeper_jaas.conf"
-      ZOOKEEPER_ALLOW_SASL_ANONYMOUS: "false"
       ZOOKEEPER_LOG4J_ROOT_LOGLEVEL: ERROR
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_logs:/var/lib/zookeeper/log
-      - ./secrets/kafka:/etc/kafka
     healthcheck:
       <<: *healthcheck-defaults
       test: ["CMD", "bash", "-c", "echo 'ruok' | nc localhost 2181"]
@@ -95,7 +91,6 @@ services:
       CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: "1"   # single-broker cluster
       CONFLUENT_METRICS_REPORTER_TOPIC_CREATE: "true"  # auto-create _confluent-metrics
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,EXTERNAL://kafka.ecoceutics.com:9092
-      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/jaas.conf -Dzookeeper.sasl.client=true -Dzookeeper.sasl.client.username=kafka"
       CONFLUENT_CRUISE_CONTROL_ENABLE: "false"
       CONFLUENT_TELEMETRY_ENABLED: "false"
       KAFKA_LOG4J_ROOT_LOGLEVEL: FATAL
