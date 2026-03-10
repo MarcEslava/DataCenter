@@ -13,4 +13,6 @@ AIRFLOW_API_SECRET_KEY=this_is_a_very_secured_key_change_in_production
 # AIRFLOW_API_JWT_SECRET=0f1e2d3c4b5a69788796a5b4c3d2e1f0ffeeddccbbaa99887766554433221100
 
 
+CECO_DB1_IP=10.XX.XX.X
+CECO_DB2_IP=10.XX.XX.X
 

@@ -5,6 +5,10 @@
 x-common: &common
   restart: unless-stopped
   networks: [confluent]
+  # Add extra_hosts to resolve internal hostnames for services that need to connect to external resources
+  extra_hosts:
+  - "cecobd1-int.ecoceutics.com:${CECO_DB1_IP}"
+  - "cecobd2-int.ecoceutics.com:${CECO_DB2_IP}"
 
 x-healthcheck: &healthcheck-defaults
   interval: 10s
