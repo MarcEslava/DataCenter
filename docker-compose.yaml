@@ -1,7 +1,9 @@
-
 x-common: &common
   restart: unless-stopped
   networks: [confluent]
+  extra_hosts:
+    - "cecobd1-int.ecoceutics.com:${CECO_DB1_IP}"
+    - "cecobd2-int.ecoceutics.com:${CECO_DB2_IP}"
 
 x-healthcheck: &healthcheck-defaults
   interval: 10s
@@ -33,8 +35,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:-jpI3a/LHtBgnJZ8KUx90zg==}
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__LOGGING__LOGGING_LEVEL: ERROR
-    AIRFLOW__WEBSERVER__LOG_FETCH_TIMEOUT_SEC: "15"
-    AIRFLOW__WEBSERVER__BASE_URL: http://datahub.local/airflow
+    AIRFLOW__WEBSERVER__BASE_URL: ${AIRFLOW_BASE_URL:-http://datahub.local/airflow}
     FORWARDED_ALLOW_IPS: "*"
   volumes:
     - ./dags:/opt/airflow/dags
@@ -286,7 +287,6 @@ services:
     working_dir: /work/projects
     tty: true
     stdin_open: true
-    deploy: *deploy-medium
     command: sleep infinity
     networks: [confluent]
     environment:
