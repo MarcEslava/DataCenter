@@ -93,41 +93,31 @@ def novedades_sku_pharma_etl():
                 break
             page += 1
             sleep(0.3)
-        grouped = {}
-        owners = {}  # client_name -> set of unique owner emails with their info
-        test_vendors = pd.DataFrame(all_vendors)
-        print(f"Extracted {len(test_vendors)} vendors from Zoho with columns: {test_vendors.columns.tolist()}")
-        print(f"Sample vendor data: {test_vendors.head()}")
-        for v in all_vendors:
-            if v.get("Tipo_Acuerdo") == "Obligatorio" or v.get("Tipo_Acuerdo") == "Opcional":
-                client_name = v.get("Client_Name", "Unknown Client")
-                grouped.setdefault(client_name, []).append(v)
-
-                owner = v.get("Owner") or {}
-                if owner.get("email"):
-                    owners.setdefault(client_name, {})
-                    owners[client_name][owner["email"]] = {
-                        "name":  owner.get("name"),
-                        "id":    owner.get("id"),
-                        "email": owner["email"],
-                    }
-
-        clients = [
-            {
-                "client_name": name,
-                "vendors": vendors,
-                "owners": list(owners.get(name, {}).values()),
-            }
-            for name, vendors in grouped.items()
-        ]
-        print(f"Split into {len(clients)} clients: {[c['client_name'] for c in clients]}")
-        print(f"Extracted client data with columns: {clients[0]['vendors'][0].keys() if clients else []}")
+        print(f"Extracted {len(all_vendors)} total vendors from Zoho")
+        df = pd.DataFrame(all_vendors)
+        if df.empty:
+            print("No vendors found in Zoho.")
+            return []
+        else:
+            print("Sample extracted vendors data:", df.head())
+        # Group vendors by client (assuming 'Client_Name' field exists)
+        df = df[df['Tipo_Acuerdo'].str.strip().isin(['Obligatorio', 'Opcional'])]
+        df_owners = pd.json_normalize(df['owner'].apply(lambda x: x if isinstance(x, dict) else {}))
+        df['category_manager_name'] = df_owners['name'].values
+        df['category_manager_email'] = df_owners['email'].values
+        clients = []
+        for client_name, group in df.groupby('Client_Name'):
+            vendors = group.to_dict('records')
+            clients.append({
+                "client_name": client_name,
+                "vendor_name": vendors,
+            })
         return clients
 
     # ── 2. Extract products (once for all clients) ──────────────
     @task
     def extract_products() -> list[dict]:
-        """Extract products/sales for current and previous year. Runs ONCE."""
+        """Extract products/sales for current and previous year. Runs once."""
         import pandas as pd
         from utils.clsDate import DateHelper
         try:
@@ -222,10 +212,11 @@ def novedades_sku_pharma_etl():
 
             drop_cols = [c for c in products_df.columns if c.endswith('_ant')]
             products_df = products_df.drop(columns=drop_cols)
+            products_df = products_df[['idProducto', 'codProducto','Producto', 'idLaboratorio', 'Laboratorio']]
 
             print(f"Extracted {len(act_df)} current + {len(ant_df)} previous year rows -> {len(products_df)} merged")
             print("Extracted products data with columns:", products_df.columns.tolist())
-            return products_df.to_dict('records')
+            return products_df.to_dict('records')  # codProducto, idProducto, IdLaboratorio, 
         except Exception as e:
             print(f"Error extracting products: {e}")
             raise e  # Re-raise to mark the run as failed in Airflow
