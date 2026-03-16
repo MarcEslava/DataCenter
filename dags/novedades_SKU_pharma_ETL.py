@@ -233,7 +233,7 @@ def novedades_sku_pharma_etl():
         return df.to_dict('records')
 
     # ── 4. Per-client pipeline (runs in parallel) ─────────────
-    @task_group(group_id="process_client")
+    @task_group(group_id="process_client", map_index_template="{{ client_data['Vendor_Name'] }}")
     def process_client(client_data: dict, all_products: list[dict], all_acords: list[dict]):
         """Full ETL pipeline for a single client. Mapped dynamically."""
 
@@ -245,15 +245,16 @@ def novedades_sku_pharma_etl():
 
             Vendor_Name = client_data["Vendor_Name"]
             vendors_df = pd.DataFrame(client_data["vendor"])
-            print(vendors_df.head())
+            print("Vendor columns:", vendors_df.columns.tolist())
             acords_df = pd.DataFrame(all_acords)
-            print(acords_df.head())
+            print("Acords columns:", acords_df.columns.tolist())
             vendors_df = vendors_df.rename(columns={'Vendor_Name': 'laboratori'})
             vendors_df['laboratori'] = vendors_df['laboratori'].str.strip().str.lower()
             acords_df['laboratori'] = acords_df['Laboratori'].str.strip().str.lower()
             mapped = pd.merge(vendors_df, acords_df, on='laboratori', how='inner')
-            print(f"[{Vendor_Name}] Mapped {len(mapped)} vendors with acords")
-            print(f"[{Vendor_Name}] Mapped data columns: {mapped.head()}")
+            print(f"[{Vendor_Name}] Mapped data columns: {mapped['laboratori'].unique()}")
+            print("Mapped data:")
+            print(mapped.head())
             return {
                 "Vendor_Name": Vendor_Name,
                 "mapped": mapped.to_dict('records'),
@@ -290,8 +291,8 @@ def novedades_sku_pharma_etl():
             import pandas as pd
 
             Vendor_Name = data["Vendor_Name"]
-            products_df = pd.DataFrame(data["products"]) if data["products"] else pd.DataFrame()
-            mapped_df = pd.DataFrame(data["mapped"]) if data["mapped"] else pd.DataFrame()
+            products_df = pd.DataFrame(data["products"])
+            mapped_df = pd.DataFrame(data["mapped"])
 
             if products_df.empty or mapped_df.empty:
                 print(f"[{Vendor_Name}] No data to transform")
@@ -395,6 +396,7 @@ def novedades_sku_pharma_etl():
 
     # ── Wire it all together ──────────────────────────────────
     clients = extract_vendors()
+    category_manager = set()
     products = extract_products()
     acords = extract_acords()
     expanded = process_client.partial(all_products=products, all_acords=acords).expand(client_data=clients)
