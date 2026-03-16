@@ -102,7 +102,7 @@ def novedades_sku_pharma_etl():
             print("Sample extracted vendors data:", df.head())
         # Group vendors by client (assuming 'Client_Name' field exists)
         df = df[df['Tipo_Acuerdo'].str.strip().isin(['Obligatorio', 'Opcional'])]
-        df_owners = pd.json_normalize(df['owner'].apply(lambda x: x if isinstance(x, dict) else {}))
+        df_owners = pd.json_normalize(df['Owner'].apply(lambda x: x if isinstance(x, dict) else {}))
         df['category_manager_name'] = df_owners['name'].values
         df['category_manager_email'] = df_owners['email'].values
         clients = []
@@ -112,6 +112,7 @@ def novedades_sku_pharma_etl():
                 "client_name": client_name,
                 "vendor_name": vendors,
             })
+            print(f"Prepared client '{client_name}' with {len(vendors)} vendors")
         return clients
 
     # ── 2. Extract products (once for all clients) ──────────────
