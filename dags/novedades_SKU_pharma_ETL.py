@@ -233,7 +233,7 @@ def novedades_sku_pharma_etl():
         return df.to_dict('records')
 
     # ── 4. Per-client pipeline (runs in parallel) ─────────────
-    @task_group(group_id="process_client", map_index_template="{{ client_data['Vendor_Name'] }}")
+    @task_group(group_id="process_client")
     def process_client(client_data: dict, all_products: list[dict], all_acords: list[dict]):
         """Full ETL pipeline for a single client. Mapped dynamically."""
 
