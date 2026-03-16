@@ -211,9 +211,7 @@ def novedades_sku_pharma_etl():
                     products_df[col] = 0.0
                 products_df[col] = products_df[col].fillna(0.0)
 
-            drop_cols = [c for c in products_df.columns if c.endswith('_ant')]
-            products_df = products_df.drop(columns=drop_cols)
-            products_df = products_df[['idProducto', 'codProducto','Producto', 'idLaboratorio', 'Laboratorio']]
+            products_df = products_df[['IdProducto', 'CodProducto','Producto', 'IdLaboratorio', 'Laboratorio']]
 
             print(f"Extracted {len(act_df)} current + {len(ant_df)} previous year rows -> {len(products_df)} merged")
             print("Extracted products data with columns:", products_df.columns.tolist())
@@ -243,10 +241,13 @@ def novedades_sku_pharma_etl():
         def map_acords(client_data: dict, all_acords: list[dict]) -> dict:
             """Map client vendors against the acordsEcos table."""
             import pandas as pd
+            pd.set_option('display.max_columns', None)
 
             Vendor_Name = client_data["Vendor_Name"]
-            vendors_df = pd.json_normalize(client_data["vendors"])
+            vendors_df = pd.json_normalize(client_data["Vendor_Name"])
+            print(vendors_df.head())
             acords_df = pd.DataFrame(all_acords)
+            print(acords_df.head())
             vendors_df = vendors_df.rename(columns={'Vendor_Name': 'laboratori'})
             vendors_df['laboratori'] = vendors_df['laboratori'].str.strip().str.lower()
             acords_df['laboratori'] = acords_df['Laboratori'].str.strip().str.lower()
