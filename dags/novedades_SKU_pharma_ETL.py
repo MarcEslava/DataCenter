@@ -248,14 +248,13 @@ def novedades_sku_pharma_etl():
             acords_df  = pd.DataFrame(all_acords)
             vendors_df = vendors_df.rename(columns={'Vendor_Name': 'laboratori'})
             vendors_df['laboratori'] = vendors_df['laboratori'].str.strip().str.lower()
-            acords_df['laboratori']  = acords_df['Laboratori'].str.strip().str.lower()
-            mapped = pd.merge(vendors_df, acords_df, on='laboratori', how='inner')
+            acords_df['laboratori']  = acords_df['lab_description'].str.strip().str.lower()
+            mapped = pd.merge(vendors_df, acords_df, left_on='laboratori', right_on='lab_description', how='inner')
             bif_id = mapped['BIF_id'].unique().tolist()
             print(f"[{Vendor_Name}] -> BIF_ids: {bif_id}")
             return {
                 "Vendor_Name": Vendor_Name,
                 "laboratory_id": bif_id,
-                "mapped": mapped.to_dict('records'),
             }
 
         @task
