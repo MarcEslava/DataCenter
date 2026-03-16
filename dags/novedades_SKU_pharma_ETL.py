@@ -114,7 +114,35 @@ def novedades_sku_pharma_etl():
             })
             print(f"Prepared client '{Vendor_Name}' with {len(vendors)} vendors")
         return clients
+    #   1.5 Extract products already on CRM
+    @task
+    def extract_crm_products() -> list[dict]:
+        """Extract products already on CRM to compare with SQL data."""
+        from time import sleep
+        from airflow.hooks.base import BaseHook
+        from utils.clsZohoInput import ZohoTokenManager, ZohoCRMConnector
+        import pandas as pd
 
+        conn = BaseHook.get_connection(ZOHO_CONN_ID)
+        extra = conn.extra_dejson
+        token_mgr = ZohoTokenManager(conn.login, conn.password)
+        access_token = token_mgr.get_refresh_token(extra["refresh_token"])
+
+        crm = ZohoCRMConnector(access_token)
+        all_products = []
+        page = 0
+        while True:
+            try:
+                batch = crm.fetch_module_data("Products", params={"page": page, "per_page": 200})
+                all_products.extend(batch)
+            except Exception:
+                break
+            sleep(0.3)
+            page += 1
+        print(f"Extracted {len(all_products)} total products from Zoho CRM")
+        df_CRM_products = pd.DataFrame(all_products)
+        df_CRM_products = df_CRM_products[['Product_Code', 'EAN', 'Vendor_Name']]
+        return all_products
     # ── 2. Extract products (once for all clients) ──────────────
     @task
     def extract_products() -> list[dict]:
@@ -244,17 +272,25 @@ def novedades_sku_pharma_etl():
             pd.set_option('display.max_columns', None)
 
             Vendor_Name = client_data["Vendor_Name"]
-            vendors_df = pd.DataFrame(client_data["vendor"])
-            acords_df  = pd.DataFrame(all_acords)
-            vendors_df = vendors_df.rename(columns={'Vendor_Name': 'laboratori'})
-            vendors_df['laboratori'] = vendors_df['laboratori'].str.strip().str.lower()
-            acords_df['laboratori']  = acords_df['lab_description'].str.strip().str.lower()
-            mapped = pd.merge(vendors_df, acords_df, left_on='laboratori', right_on='lab_description', how='inner')
-            bif_id = mapped['BIF_id'].unique().tolist()
-            print(f"[{Vendor_Name}] -> BIF_ids: {bif_id}")
+            acords_df   = pd.DataFrame(all_acords)
+
+            # Step 1: find which Laboratori group this vendor belongs to via lab_description
+            acords_df['lab_desc_lower'] = acords_df['lab_description'].str.strip().str.lower()
+            match = acords_df[acords_df['lab_desc_lower'] == Vendor_Name.strip().lower()]
+
+            if match.empty:
+                print(f"[{Vendor_Name}] No match found in acords lab_description")
+                return {"Vendor_Name": Vendor_Name, "laboratory_id": [], "mapped": []}
+
+            # Step 2: collect ALL BIF_ids sharing the same Laboratori group (1:n)
+            lab_groups = match['Laboratori'].unique().tolist()
+            all_matched = acords_df[acords_df['Laboratori'].isin(lab_groups)].drop(columns=['lab_desc_lower'])
+            bif_ids = all_matched['BIF_id'].unique().tolist()
+            print(f"[{Vendor_Name}] -> group(s): {lab_groups} -> BIF_ids: {bif_ids}")
             return {
                 "Vendor_Name": Vendor_Name,
-                "laboratory_id": bif_id,
+                "laboratory_id": bif_ids,
+                "mapped": all_matched.to_dict('records'),
             }
 
         @task
@@ -262,54 +298,32 @@ def novedades_sku_pharma_etl():
             """Filter the full products dataset to this client's labs."""
             import pandas as pd
 
-            Vendor_Name = mapped_result["Vendor_Name"]
-            mapped_df = pd.DataFrame(mapped_result["mapped"])
-            products_df = pd.DataFrame(all_products)
+            Vendor_Name  = mapped_result["Vendor_Name"]
+            bif_ids      = mapped_result["laboratory_id"]
+            products_df  = pd.DataFrame(all_products)
 
-            merged_df = pd.merge(products_df, mapped_df, left_on='IdLaboratorio', right_on='laboratory_id', how='inner')
-
-            print(f"[{Vendor_Name}] Filtered {len(merged_df)} product rows from {len(products_df)} total")
-            print(f"[{Vendor_Name}] Sample merged data:", merged_df.head())
+            client_products = products_df[products_df['IdLaboratorio'].isin(bif_ids)]
+            print(f"[{Vendor_Name}] Filtered {len(client_products)} product rows from {len(products_df)} total (BIF_ids: {bif_ids})")
             return {
                 "Vendor_Name": Vendor_Name,
-                "products": merged_df.to_dict('records'),
+                "products": client_products.to_dict('records'),
+                "mapped": mapped_result["mapped"],
             }
 
         @task
-        def transform(data: dict) -> dict:
-            """Transform and enrich extracted data."""
-            import pandas as pd
-
-            Vendor_Name = data["Vendor_Name"]
-            products_df = pd.DataFrame(data["products"])
-            mapped_df = pd.DataFrame(data["mapped"])
-
-            if products_df.empty or mapped_df.empty:
-                print(f"[{Vendor_Name}] No data to transform")
-                return {"Vendor_Name": Vendor_Name, "rows": []}
-            
-            df = pd.merge(products_df, mapped_df, on='key_column', how='left')
-
-            # ── Clean ──
-            df = df.drop_duplicates()
-            df = df.dropna(subset=['key_column'])
-
-            print(f"[{Vendor_Name}] Transformed {len(df)} rows")
-            return {"Vendor_Name": Vendor_Name, "rows": df.to_dict('records')}
-
-        @task
         def load(data: dict, client_data: dict) -> dict:
-            """Load transformed data to destination."""
+            """Load filtered data to CSV."""
             import pandas as pd
             import os
 
             Vendor_Name = data["Vendor_Name"]
-            rows = data["rows"]
             owners = client_data.get("owners", [])
+            df = pd.DataFrame(data["products"])
 
-            df = pd.DataFrame(rows)
+            if df.empty:
+                print(f"[{Vendor_Name}] No products to load")
+                return {"Vendor_Name": Vendor_Name, "row_count": 0, "output_path": None, "owners": owners}
 
-            # ── Option B: Write to CSV (one per client) ──
             safe_name = Vendor_Name.replace("'", "").replace(" ", "_").lower()
             output_path = f"/opt/airflow/dags/output/novedades_SKU_{safe_name}.csv"
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -319,10 +333,9 @@ def novedades_sku_pharma_etl():
             return {"Vendor_Name": Vendor_Name, "row_count": len(df), "output_path": output_path, "owners": owners}
 
         # Wire the per-client pipeline
-        mapped = map_acords(client_data, all_acords)
+        mapped   = map_acords(client_data, all_acords)
         filtered = filter_products(mapped, all_products)
-        transformed = transform(filtered)
-        load(transformed, client_data)
+        load(filtered, client_data)
 
     @task(trigger_rule="all_done")
     def notify_categories(**context) -> None:
