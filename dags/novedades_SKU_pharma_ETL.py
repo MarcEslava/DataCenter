@@ -245,18 +245,16 @@ def novedades_sku_pharma_etl():
 
             Vendor_Name = client_data["Vendor_Name"]
             vendors_df = pd.DataFrame(client_data["vendor"])
-            print("Vendor columns:", vendors_df.columns.tolist())
-            acords_df = pd.DataFrame(all_acords)
-            print("Acords columns:", acords_df.columns.tolist())
+            acords_df  = pd.DataFrame(all_acords)
             vendors_df = vendors_df.rename(columns={'Vendor_Name': 'laboratori'})
             vendors_df['laboratori'] = vendors_df['laboratori'].str.strip().str.lower()
-            acords_df['laboratori'] = acords_df['Laboratori'].str.strip().str.lower()
+            acords_df['laboratori']  = acords_df['Laboratori'].str.strip().str.lower()
             mapped = pd.merge(vendors_df, acords_df, on='laboratori', how='inner')
-            print(f"[{Vendor_Name}] Mapped data columns: {mapped['laboratori'].unique()}")
-            print("Mapped data:")
-            print(mapped.head())
+            bif_id = mapped['BIF_id'].unique().tolist()
+            print(f"[{Vendor_Name}] -> BIF_ids: {bif_id}")
             return {
                 "Vendor_Name": Vendor_Name,
+                "laboratory_id": bif_id,
                 "mapped": mapped.to_dict('records'),
             }
 
@@ -269,20 +267,13 @@ def novedades_sku_pharma_etl():
             mapped_df = pd.DataFrame(mapped_result["mapped"])
             products_df = pd.DataFrame(all_products)
 
-            if mapped_df.empty or products_df.empty:
-                print(f"[{Vendor_Name}] No data to filter")
-                return {"Vendor_Name": Vendor_Name, "products": [], "mapped": []}
+            merged_df = pd.merge(products_df, mapped_df, left_on='IdLaboratorio', right_on='laboratory_id', how='inner')
 
-            # TODO [DATA-47]: Adjust filter — match labs from mapped vendors to products
-            # lab_ids = mapped_df['codLab'].unique().tolist()
-            # client_products = products_df[products_df['IdLaboratorio'].isin(lab_ids)]
-            client_products = products_df  # placeholder — filter by lab above
-
-            print(f"[{Vendor_Name}] Filtered {len(client_products)} product rows from {len(products_df)} total")
+            print(f"[{Vendor_Name}] Filtered {len(merged_df)} product rows from {len(products_df)} total")
+            print(f"[{Vendor_Name}] Sample merged data:", merged_df.head())
             return {
                 "Vendor_Name": Vendor_Name,
-                "products": client_products.to_dict('records'),
-                "mapped": mapped_result["mapped"],
+                "products": merged_df.to_dict('records'),
             }
 
         @task
@@ -316,10 +307,6 @@ def novedades_sku_pharma_etl():
             Vendor_Name = data["Vendor_Name"]
             rows = data["rows"]
             owners = client_data.get("owners", [])
-
-            if not rows:
-                print(f"[{Vendor_Name}] No data to load")
-                return {"Vendor_Name": Vendor_Name, "row_count": 0, "output_path": None, "owners": owners}
 
             df = pd.DataFrame(rows)
 
