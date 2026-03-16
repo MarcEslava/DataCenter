@@ -301,7 +301,8 @@ def novedades_sku_pharma_etl():
             Vendor_Name  = mapped_result["Vendor_Name"]
             bif_ids      = mapped_result["laboratory_id"]
             products_df  = pd.DataFrame(all_products)
-
+            print(f"Columns in products_df: {products_df.columns.tolist()}")
+            print(f"Data in products_df:\n{products_df.head()}")
             client_products = products_df[products_df['IdLaboratorio'].isin(bif_ids)]
             print(f"[{Vendor_Name}] Filtered {len(client_products)} product rows from {len(products_df)} total (BIF_ids: {bif_ids})")
             return {
