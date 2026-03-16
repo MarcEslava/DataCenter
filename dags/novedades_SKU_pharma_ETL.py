@@ -100,19 +100,19 @@ def novedades_sku_pharma_etl():
             return []
         else:
             print("Sample extracted vendors data:", df.head())
-        # Group vendors by client (assuming 'Client_Name' field exists)
+        # Group vendors by client (assuming 'Vendor_Name' field exists)
         df = df[df['Tipo_Acuerdo'].str.strip().isin(['Obligatorio', 'Opcional'])]
         df_owners = pd.json_normalize(df['Owner'].apply(lambda x: x if isinstance(x, dict) else {}))
         df['category_manager_name'] = df_owners['name'].values
         df['category_manager_email'] = df_owners['email'].values
         clients = []
-        for client_name, group in df.groupby('Client_Name'):
+        for Vendor_Name, group in df.groupby('Vendor_Name'):
             vendors = group.to_dict('records')
             clients.append({
-                "client_name": client_name,
+                "Vendor_Name": Vendor_Name,
                 "vendor_name": vendors,
             })
-            print(f"Prepared client '{client_name}' with {len(vendors)} vendors")
+            print(f"Prepared client '{Vendor_Name}' with {len(vendors)} vendors")
         return clients
 
     # ── 2. Extract products (once for all clients) ──────────────
@@ -244,17 +244,17 @@ def novedades_sku_pharma_etl():
             """Map client vendors against the acordsEcos table."""
             import pandas as pd
 
-            client_name = client_data["client_name"]
+            Vendor_Name = client_data["Vendor_Name"]
             vendors_df = pd.json_normalize(client_data["vendors"])
             acords_df = pd.DataFrame(all_acords)
             vendors_df = vendors_df.rename(columns={'Vendor_Name': 'laboratori'})
             vendors_df['laboratori'] = vendors_df['laboratori'].str.strip().str.lower()
             acords_df['laboratori'] = acords_df['Laboratori'].str.strip().str.lower()
             mapped = pd.merge(vendors_df, acords_df, on='laboratori', how='inner')
-            print(f"[{client_name}] Mapped {len(mapped)} vendors with acords")
-            print(f"[{client_name}] Mapped data columns: {mapped.head()}")
+            print(f"[{Vendor_Name}] Mapped {len(mapped)} vendors with acords")
+            print(f"[{Vendor_Name}] Mapped data columns: {mapped.head()}")
             return {
-                "client_name": client_name,
+                "Vendor_Name": Vendor_Name,
                 "mapped": mapped.to_dict('records'),
             }
 
@@ -263,22 +263,22 @@ def novedades_sku_pharma_etl():
             """Filter the full products dataset to this client's labs."""
             import pandas as pd
 
-            client_name = mapped_result["client_name"]
+            Vendor_Name = mapped_result["Vendor_Name"]
             mapped_df = pd.DataFrame(mapped_result["mapped"])
             products_df = pd.DataFrame(all_products)
 
             if mapped_df.empty or products_df.empty:
-                print(f"[{client_name}] No data to filter")
-                return {"client_name": client_name, "products": [], "mapped": []}
+                print(f"[{Vendor_Name}] No data to filter")
+                return {"Vendor_Name": Vendor_Name, "products": [], "mapped": []}
 
             # TODO [DATA-47]: Adjust filter — match labs from mapped vendors to products
             # lab_ids = mapped_df['codLab'].unique().tolist()
             # client_products = products_df[products_df['IdLaboratorio'].isin(lab_ids)]
             client_products = products_df  # placeholder — filter by lab above
 
-            print(f"[{client_name}] Filtered {len(client_products)} product rows from {len(products_df)} total")
+            print(f"[{Vendor_Name}] Filtered {len(client_products)} product rows from {len(products_df)} total")
             return {
-                "client_name": client_name,
+                "Vendor_Name": Vendor_Name,
                 "products": client_products.to_dict('records'),
                 "mapped": mapped_result["mapped"],
             }
@@ -288,13 +288,13 @@ def novedades_sku_pharma_etl():
             """Transform and enrich extracted data."""
             import pandas as pd
 
-            client_name = data["client_name"]
+            Vendor_Name = data["Vendor_Name"]
             products_df = pd.DataFrame(data["products"]) if data["products"] else pd.DataFrame()
             mapped_df = pd.DataFrame(data["mapped"]) if data["mapped"] else pd.DataFrame()
 
             if products_df.empty or mapped_df.empty:
-                print(f"[{client_name}] No data to transform")
-                return {"client_name": client_name, "rows": []}
+                print(f"[{Vendor_Name}] No data to transform")
+                return {"Vendor_Name": Vendor_Name, "rows": []}
             
             df = pd.merge(products_df, mapped_df, on='key_column', how='left')
 
@@ -302,8 +302,8 @@ def novedades_sku_pharma_etl():
             df = df.drop_duplicates()
             df = df.dropna(subset=['key_column'])
 
-            print(f"[{client_name}] Transformed {len(df)} rows")
-            return {"client_name": client_name, "rows": df.to_dict('records')}
+            print(f"[{Vendor_Name}] Transformed {len(df)} rows")
+            return {"Vendor_Name": Vendor_Name, "rows": df.to_dict('records')}
 
         @task
         def load(data: dict, client_data: dict) -> dict:
@@ -311,24 +311,24 @@ def novedades_sku_pharma_etl():
             import pandas as pd
             import os
 
-            client_name = data["client_name"]
+            Vendor_Name = data["Vendor_Name"]
             rows = data["rows"]
             owners = client_data.get("owners", [])
 
             if not rows:
-                print(f"[{client_name}] No data to load")
-                return {"client_name": client_name, "row_count": 0, "output_path": None, "owners": owners}
+                print(f"[{Vendor_Name}] No data to load")
+                return {"Vendor_Name": Vendor_Name, "row_count": 0, "output_path": None, "owners": owners}
 
             df = pd.DataFrame(rows)
 
             # ── Option B: Write to CSV (one per client) ──
-            safe_name = client_name.replace("'", "").replace(" ", "_").lower()
+            safe_name = Vendor_Name.replace("'", "").replace(" ", "_").lower()
             output_path = f"/opt/airflow/dags/output/novedades_SKU_{safe_name}.csv"
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             df.to_csv(output_path, index=False)
 
-            print(f"[{client_name}] Loaded {len(df)} rows to {output_path}")
-            return {"client_name": client_name, "row_count": len(df), "output_path": output_path, "owners": owners}
+            print(f"[{Vendor_Name}] Loaded {len(df)} rows to {output_path}")
+            return {"Vendor_Name": Vendor_Name, "row_count": len(df), "output_path": output_path, "owners": owners}
 
         # Wire the per-client pipeline
         mapped = map_acords(client_data, all_acords)
@@ -373,7 +373,7 @@ def novedades_sku_pharma_etl():
             owner = data["owner"]
             clients = data["clients"]
             rows_html = "".join(
-                f"<tr><td>{c['client_name']}</td><td>{c['row_count']}</td><td>{c['output_path']}</td></tr>"
+                f"<tr><td>{c['Vendor_Name']}</td><td>{c['row_count']}</td><td>{c['output_path']}</td></tr>"
                 for c in clients
             )
             html_body = (
