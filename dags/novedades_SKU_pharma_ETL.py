@@ -244,7 +244,7 @@ def novedades_sku_pharma_etl():
             pd.set_option('display.max_columns', None)
 
             Vendor_Name = client_data["Vendor_Name"]
-            vendors_df = pd.json_normalize(client_data["Vendor_Name"])
+            vendors_df = pd.DataFrame(client_data["vendor_name"])
             print(vendors_df.head())
             acords_df = pd.DataFrame(all_acords)
             print(acords_df.head())
