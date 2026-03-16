@@ -110,7 +110,7 @@ def novedades_sku_pharma_etl():
             vendors = group.to_dict('records')
             clients.append({
                 "Vendor_Name": Vendor_Name,
-                "vendor_name": vendors,
+                "vendor": vendors,
             })
             print(f"Prepared client '{Vendor_Name}' with {len(vendors)} vendors")
         return clients
@@ -244,7 +244,7 @@ def novedades_sku_pharma_etl():
             pd.set_option('display.max_columns', None)
 
             Vendor_Name = client_data["Vendor_Name"]
-            vendors_df = pd.DataFrame(client_data["vendor_name"])
+            vendors_df = pd.DataFrame(client_data["vendor"])
             print(vendors_df.head())
             acords_df = pd.DataFrame(all_acords)
             print(acords_df.head())
