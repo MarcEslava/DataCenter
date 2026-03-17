@@ -106,7 +106,7 @@ def novedades_sku_pharma_etl():
         df['category_manager_name'] = df_owners['name'].values
         df['category_manager_email'] = df_owners['email'].values
         clients = []
-        for Vendor_Name, group in df.groupby('Vendor_Name'):
+        for Vendor_Name, group in df.groupby('Shortname'):
             vendors = group.to_dict('records')
             clients.append({
                 "Vendor_Name": Vendor_Name,
@@ -273,7 +273,7 @@ def novedades_sku_pharma_etl():
             import pandas as pd
             pd.set_option('display.max_columns', None)
 
-            Vendor_Name = client_data["Shortname"]
+            Vendor_Name = client_data["Vendor_Name"]
             acords_df   = pd.DataFrame(all_acords)
 
             # Step 1: find which Laboratori group this vendor belongs to via lab_description
