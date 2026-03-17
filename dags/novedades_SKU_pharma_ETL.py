@@ -277,7 +277,7 @@ def novedades_sku_pharma_etl():
             acords_df   = pd.DataFrame(all_acords)
 
             # Step 1: find which Laboratori group this vendor belongs to via lab_description
-            acords_df['lab_desc_lower'] = acords_df['lab_description'].str.strip().str.lower()
+            acords_df['lab_desc_lower'] = acords_df['Laboratori'].str.strip().str.lower()
             match = acords_df[acords_df['lab_desc_lower'] == Vendor_Name.strip().lower()]
 
             if match.empty:
