@@ -114,6 +114,7 @@ def novedades_sku_pharma_etl():
             })
             print(f"Prepared client '{Vendor_Name}' with {len(vendors)} vendors")
         return clients
+    
     #   1.5 Extract products already on CRM
     @task
     def extract_crm_products() -> list[dict]:
@@ -264,7 +265,7 @@ def novedades_sku_pharma_etl():
 
     # ── 4. Per-client pipeline (runs in parallel) ─────────────
     @task_group(group_id="process_client")
-    def process_client(client_data: dict, all_products: list[dict], all_acords: list[dict]):
+    def process_client(client_data: dict, all_products: list[dict], all_acords: list[dict], all_crm_products: list[dict]):
         """Full ETL pipeline for a single client. Mapped dynamically."""
 
         @task
@@ -314,11 +315,33 @@ def novedades_sku_pharma_etl():
                 "mapped": mapped_result["mapped"],
             }
 
-        
+        @task
+        def new_products(all_crm_products : dict, filtered_products: dict) -> dict:
+            """Compare the client's products against CRM and keep only new ones."""
+            import pandas as pd
+            pd.set_option('display.max_columns', None)
 
+            Vendor_Name = filtered_products["Vendor_Name"]
+            client_prods_df = pd.DataFrame(filtered_products["products"])
+            crm_prods_df    = pd.DataFrame(all_crm_products)
+            print(f"[{Vendor_Name}] Comparing {len(client_prods_df)} client products against {len(crm_prods_df)} CRM products")
+            matched_by_code = set(pd.merge(client_prods_df, crm_prods_df, left_on='CodProducto', right_on='Product_Code', how='inner')['CodProducto'])
+            matched_by_ean  = set(pd.merge(client_prods_df, crm_prods_df, left_on='CodProducto', right_on='EAN',          how='inner')['CodProducto'])
+            already_in_crm  = matched_by_code | matched_by_ean
+            new_prods_df    = client_prods_df[~client_prods_df['CodProducto'].isin(already_in_crm)]
+            print(f"[{Vendor_Name}] Found {len(new_prods_df)} new products not in CRM")
+            return {
+                "Vendor_Name": Vendor_Name,
+                "new_products": new_prods_df.to_dict('records'),
+                "mapped": filtered_products["mapped"],
+            }
+            
+        
         # Wire the per-client pipeline
         mapped   = map_acords(client_data, all_acords)
-        filter_products(mapped, all_products)
+        filtered_products = filter_products(mapped, all_products)
+        return new_products(all_crm_products, filtered_products)
+
 
 
     @task(trigger_rule="all_done")
@@ -379,10 +402,10 @@ def novedades_sku_pharma_etl():
 
     # ── Wire it all together ──────────────────────────────────
     clients = extract_vendors()
-    category_manager = set()
+    crm_products = extract_crm_products()
     products = extract_products()
     acords = extract_acords()
-    expanded = process_client.partial(all_products=products, all_acords=acords).expand(client_data=clients)
+    expanded = process_client.partial(all_products=products, all_acords=acords, all_crm_products=crm_products).expand(client_data=clients)
     expanded >> notify_categories()
 
 # Instantiate the DAG
