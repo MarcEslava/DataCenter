@@ -314,29 +314,6 @@ def novedades_sku_pharma_etl():
                 "mapped": mapped_result["mapped"],
             }
 
-        @task
-        def load(data: dict, client_data: dict) -> dict:
-            """Load filtered data to CSV."""
-            import pandas as pd
-            import os
-
-            Vendor_Name = data["Vendor_Name"]
-            owners = client_data.get("owners", [])
-            df = pd.DataFrame(data["products"])
-
-            if df.empty:
-                print(f"[{Vendor_Name}] No products to load")
-                return {"Vendor_Name": Vendor_Name, "row_count": 0, "output_path": None, "owners": owners}
-
-            safe_name = Vendor_Name.replace("'", "").replace(" ", "_").lower()
-
-            print(f"[{Vendor_Name}] Loaded {len(df)} rows to {output_path}")
-            return {"Vendor_Name": Vendor_Name, "row_count": len(df), "output_path": output_path, "owners": owners}
-
-        # Wire the per-client pipeline
-        mapped   = map_acords(client_data, all_acords)
-        filtered = filter_products(mapped, all_products)
-        load(filtered, client_data)
 
     @task(trigger_rule="all_done")
     def notify_categories(**context) -> None:
