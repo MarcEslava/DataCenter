@@ -329,9 +329,6 @@ def novedades_sku_pharma_etl():
                 return {"Vendor_Name": Vendor_Name, "row_count": 0, "output_path": None, "owners": owners}
 
             safe_name = Vendor_Name.replace("'", "").replace(" ", "_").lower()
-            output_path = f"/opt/airflow/dags/output/novedades_SKU_{safe_name}.csv"
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            df.to_csv(output_path, index=False)
 
             print(f"[{Vendor_Name}] Loaded {len(df)} rows to {output_path}")
             return {"Vendor_Name": Vendor_Name, "row_count": len(df), "output_path": output_path, "owners": owners}
