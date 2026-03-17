@@ -314,6 +314,12 @@ def novedades_sku_pharma_etl():
                 "mapped": mapped_result["mapped"],
             }
 
+        
+
+        # Wire the per-client pipeline
+        mapped   = map_acords(client_data, all_acords)
+        filter_products(mapped, all_products)
+
 
     @task(trigger_rule="all_done")
     def notify_categories(**context) -> None:
