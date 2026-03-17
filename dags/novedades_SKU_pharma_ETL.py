@@ -155,6 +155,7 @@ def novedades_sku_pharma_etl():
             prev_yy   = d.offset(years=-1).anyo
             curr_year = d.offset(years=-1).anyo
             prev_year = d.offset(years=-1).anyo
+            fin_month = str(d.mes).zfill(2)
             print(f"Extracting products for years: current={curr_year} ({curr_yy}), previous={prev_year} ({prev_yy})")
 
             GROUP_BY = """
@@ -210,7 +211,7 @@ def novedades_sku_pharma_etl():
                         SUM(ISNULL(T1.cantidadcompra, 0)) AS CantidadCompraAct,
                         SUM(ISNULL(T1.importecompra, 0))  AS ImporteCompraAct
                     {BASE_FROM}
-                    WHERE T1.anyomes >= {curr_yy}01 AND T1.anyomes <= {curr_yy}12
+                    WHERE T1.anyomes >= {curr_yy}01 AND T1.anyomes <= {curr_yy}{fin_month}
                         AND {ECO_FILTER}
                         AND pr.codLab IN (SELECT idLab FROM BifarmaCentral.dbo.labAcuerdos WHERE anyo = {curr_year})
                     {GROUP_BY}""")
@@ -223,7 +224,7 @@ def novedades_sku_pharma_etl():
                         SUM(ISNULL(T1.cantidadcompra, 0)) AS CantidadCompraAnt,
                         SUM(ISNULL(T1.importecompra, 0))  AS ImporteCompraAnt
                     {BASE_FROM}
-                    WHERE T1.anyomes >= {prev_yy}01 AND T1.anyomes <= {prev_yy}12
+                    WHERE T1.anyomes >= {prev_yy}01 AND T1.anyomes <= {prev_yy}{fin_month}
                         AND {ECO_FILTER}
                         AND pr.codLab IN (SELECT idLab FROM BifarmaCentral.dbo.labAcuerdos WHERE anyo = {prev_year})
                     {GROUP_BY}""")
@@ -304,7 +305,7 @@ def novedades_sku_pharma_etl():
             products_df  = pd.DataFrame(all_products)
             print(f"Columns in products_df: {products_df.columns.tolist()}")
             print(f"Data in products_df:\n{products_df.head()}")
-            client_products = products_df[products_df['IdLaboratorio'].str.contains(bif_ids)]
+            client_products = products_df[products_df['IdLaboratorio'].str.strip().isin(bif_ids)]
             print(f"[{Vendor_Name}] Filtered {len(client_products)} product rows from {len(products_df)} total (BIF_ids: {bif_ids})")
             return {
                 "Vendor_Name": Vendor_Name,
