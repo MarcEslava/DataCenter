@@ -151,10 +151,11 @@ def novedades_sku_pharma_etl():
         from utils.clsDate import DateHelper
         try:
             d = DateHelper()
-            curr_yy = d.offset(years=-1).anyo_short
-            prev_yy = d.offset(years=-2).anyo_short
-            curr_year = d.offset(years=-1).anyo
-            prev_year = d.offset(years=-2).anyo
+            curr_yy   = d.anyo
+            prev_yy   = d.offset(years=-1).anyo
+            curr_year = d.anyo
+            prev_year = d.offset(years=-1).anyo
+            print(f"Extracting products for years: current={curr_year} ({curr_yy}), previous={prev_year} ({prev_yy})")
 
             GROUP_BY = """
                 GROUP BY
