@@ -166,7 +166,7 @@ def novedades_sku_pharma_etl():
                     pr.idfamilia, f.nombrefamiliaeco"""
 
             BASE_FROM = """
-                FROM dbo.bench_dwComprasVentasMesSNew T1
+                FROM dbo.bench_dwComprasVentasMesS T1
                 INNER JOIN dbo.tme_delegaciones de ON T1.idendeS = de.idendeS
                 INNER JOIN dbo.tbi_productosERS pr ON T1.idendeS = pr.idendeS AND T1.idproducto = pr.idproducto
                 INNER JOIN dbo.vteco_familias f    ON f.idfamiliaeco = pr.idfamilia"""
