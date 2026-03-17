@@ -273,7 +273,7 @@ def novedades_sku_pharma_etl():
             import pandas as pd
             pd.set_option('display.max_columns', None)
 
-            Vendor_Name = client_data["Vendor_Name"]
+            Vendor_Name = client_data["Shortname"]
             acords_df   = pd.DataFrame(all_acords)
 
             # Step 1: find which Laboratori group this vendor belongs to via lab_description
