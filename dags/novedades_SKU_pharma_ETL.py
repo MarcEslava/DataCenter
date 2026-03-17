@@ -305,7 +305,7 @@ def novedades_sku_pharma_etl():
             bif_ids      = mapped_result["laboratory_id"]
             products_df  = pd.DataFrame(all_products)
             print(f"[{Vendor_Name}] BIF_ids: {bif_ids}")
-            print(f"Data in products_df:\n{products_df['IdLaboratorio'].value_counts()}")
+            print(f"[{Vendor_Name}] P0611 in products: {products_df['IdLaboratorio'].str.strip().isin(bif_ids).any()}")
             client_products = products_df[products_df['IdLaboratorio'].str.strip().isin(bif_ids)]
             print(f"[{Vendor_Name}] Filtered {len(client_products)} product rows from {len(products_df)} total (BIF_ids: {bif_ids})")
             return {
