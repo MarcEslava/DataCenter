@@ -382,9 +382,9 @@ def novedades_sku_pharma_etl():
         notify_categories(result)
 
     # ── Wire it all together ──────────────────────────────────
+    products     = extract_products()
     clients      = extract_vendors()
     crm_products = extract_crm_products()
-    products     = extract_products()
     acords       = extract_acords()
     process_client.partial(all_products=products, all_acords=acords, all_crm_products=crm_products).expand(client_data=clients)
 
