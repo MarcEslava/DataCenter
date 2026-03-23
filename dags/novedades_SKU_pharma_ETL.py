@@ -154,8 +154,8 @@ def novedades_sku_pharma_etl():
             d = DateHelper()
             curr_yy   = d.anyo
             prev_yy   = d.offset(years=-1).anyo
-            curr_year = d.offset(years=-1).anyo
-            prev_year = d.offset(years=-1).anyo
+            curr_year = d.offset(years=-2).anyo
+            prev_year = d.offset(years=-2).anyo
             fin_month = str(d.mes).zfill(2)
             print(f"Extracting products for years: current={curr_year} ({curr_yy}), previous={prev_year} ({prev_yy})")
 
@@ -326,6 +326,11 @@ def novedades_sku_pharma_etl():
             client_prods_df = pd.DataFrame(filtered_products["products"])
             crm_prods_df    = pd.DataFrame(all_crm_products)
             print(f"[{Vendor_Name}] Comparing {len(client_prods_df)} client products against {len(crm_prods_df)} CRM products")
+            
+            client_prods_df['CodProducto'] = pd.to_numeric(client_prods_df['CodProducto'], errors='coerce').round(0)
+            crm_prods_df['Product_Code'] = pd.to_numeric(crm_prods_df['Product_Code'], errors='coerce').round(0)
+            crm_prods_df['EAN'] = pd.to_numeric(crm_prods_df['EAN']).fillna(0).round(0) 
+            
             matched_by_code = set(pd.merge(client_prods_df, crm_prods_df, left_on='CodProducto', right_on='Product_Code', how='inner')['CodProducto'])
             matched_by_ean  = set(pd.merge(client_prods_df, crm_prods_df, left_on='CodProducto', right_on='EAN',          how='inner')['CodProducto'])
             already_in_crm  = matched_by_code | matched_by_ean
@@ -338,76 +343,50 @@ def novedades_sku_pharma_etl():
             }
             
         
-        # Wire the per-client pipeline
-        mapped   = map_acords(client_data, all_acords)
-        filtered_products = filter_products(mapped, all_products)
-        return new_products(all_crm_products, filtered_products)
+        @task
+        def notify_categories(result: dict) -> None:
+            """Send a notification email for this vendor's new products."""
+            from utils.clsZohoMailing import ZohoMailer
 
+            Vendor_Name  = result.get("Vendor_Name", "Unknown")
+            new_prods    = result.get("new_products", [])
 
+            if not new_prods:
+                print(f"[{Vendor_Name}] No new products — skipping notification.")
+                return
 
-    @task(trigger_rule="all_done")
-    def notify_categories(**context) -> None:
-        """Send one email per owner (in MAIL_RECIPIENTS) summarising their clients with new data."""
-        from utils.clsZohoMailing import ZohoMailer
-
-        ti = context["ti"]
-        # Pull every load result produced by the mapped task group
-        all_results = ti.xcom_pull(task_ids="process_client.load") or []
-        if isinstance(all_results, dict):
-            all_results = [all_results]
-
-        # Keep only clients that actually produced rows
-        results_with_data = [r for r in all_results if r and r.get("row_count", 0) > 0]
-        if not results_with_data:
-            print("No clients with new data — skipping notifications.")
-            return
-
-        # Group by owner email  →  {email: {"owner": {...}, "clients": [...]}}
-        owner_map: dict = {}
-        for r in results_with_data:
-            for owner in r.get("owners", []):
-                email = owner.get("email", "")
-                if email not in MAIL_RECIPIENTS:
-                    continue
-                if email not in owner_map:
-                    owner_map[email] = {"owner": owner, "clients": []}
-                owner_map[email]["clients"].append(r)
-
-        if not owner_map:
-            print("No matching owners in MAIL_RECIPIENTS — skipping notifications.")
-            return
-
-        mailer = ZohoMailer()
-        for email, data in owner_map.items():
-            owner = data["owner"]
-            clients = data["clients"]
             rows_html = "".join(
-                f"<tr><td>{c['Vendor_Name']}</td><td>{c['row_count']}</td><td>{c['output_path']}</td></tr>"
-                for c in clients
+                f"<tr><td>{p.get('CodProducto','')}</td><td>{p.get('Producto','')}</td><td>{p.get('IdLaboratorio','')}</td></tr>"
+                for p in new_prods
             )
             html_body = (
-                f"<p>Hola {owner.get('name', '')}.</p>"
-                f"<p>El proceso <b>Novedades SKU</b> ha finalizado con los siguientes resultados:</p>"
+                f"<p>El proceso <b>Novedades SKU</b> ha encontrado <b>{len(new_prods)}</b> productos nuevos para <b>{Vendor_Name}</b>:</p>"
                 f"<table border='1' cellpadding='4'>"
-                f"<tr><th>Cliente</th><th>Filas</th><th>Archivo</th></tr>"
+                f"<tr><th>CodProducto</th><th>Producto</th><th>Laboratorio</th></tr>"
                 f"{rows_html}"
                 f"</table>"
             )
-            subject = f"[Novedades SKU] {len(clients)} cliente(s) con nuevos datos"
+            subject = f"[Novedades SKU] {Vendor_Name} — {len(new_prods)} producto(s) nuevo(s)"
+            mailer = ZohoMailer()
             mailer.send(
-                to=[{"address": "meslava@ecoceutics.com", "name": owner.get("name", "")}],
+                to=[{"address": "meslava@ecoceutics.com", "name": "Marc Eslava"}],
                 subject=subject,
                 html_body=html_body,
             )
-            print(f"Notification sent to {email} for {len(clients)} client(s)")
+            print(f"[{Vendor_Name}] Notification sent ({len(new_prods)} new products)")
+
+        # Wire the per-client pipeline
+        mapped            = map_acords(client_data, all_acords)
+        filtered_products = filter_products(mapped, all_products)
+        result            = new_products(all_crm_products, filtered_products)
+        notify_categories(result)
 
     # ── Wire it all together ──────────────────────────────────
-    clients = extract_vendors()
+    clients      = extract_vendors()
     crm_products = extract_crm_products()
-    products = extract_products()
-    acords = extract_acords()
-    expanded = process_client.partial(all_products=products, all_acords=acords, all_crm_products=crm_products).expand(client_data=clients)
-    expanded >> notify_categories()
+    products     = extract_products()
+    acords       = extract_acords()
+    process_client.partial(all_products=products, all_acords=acords, all_crm_products=crm_products).expand(client_data=clients)
 
 # Instantiate the DAG
 novedades_sku_pharma_etl()
