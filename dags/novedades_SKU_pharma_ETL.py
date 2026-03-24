@@ -341,8 +341,8 @@ def novedades_sku_pharma_etl():
                 "new_products": new_prods_df.to_dict('records'),
                 "mapped": filtered_products["mapped"],
             }
-            
-        
+
+
         @task
         def notify_categories(result: dict) -> None:
             """Send a notification email for this vendor's new products."""
