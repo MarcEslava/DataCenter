@@ -292,6 +292,7 @@ def novedades_sku_pharma_etl():
         def notify_categories(result: dict) -> None:
             """Send a notification email for this vendor's new products."""
             from utils.clsZohoMailing import ZohoMailer
+            from utils.clsDate import DateHelper
 
             Vendor_Name  = result.get("Vendor_Name", "Unknown")
             new_prods    = result.get("new_products", [])
@@ -310,10 +311,9 @@ def novedades_sku_pharma_etl():
             buf = io.StringIO()
             writer = csv.DictWriter(buf, fieldnames=[
                 'CodProducto', 'CodProducto', 'Producto_x', 'Laboratorio_x', 'Marca', 'GAMMA',
-                'PVL', 'IVA', 'ImporteCompraAct', 'CantidadCompraAct',
-                'Dto. Book 1', 'Dto. Book 2', 'Dto. Book 3',
+                'PVL', 'IVA', 'Dto. Book 1', 'Dto. Book 2', 'Dto. Book 3',
                 'Unid. BOOK 1', 'Unid. BOOK 2', 'Unid. BOOK 3',
-                'Pack', 'Novedad', 'Opcional', 'Estado', 'Precio Unitario Compra',
+                'Pack', 'Novedad', 'Opcional', 'Estado', 'Precio Unitario Compra', 'ImporteCompraAct', 'CantidadCompraAct'
             ], extrasaction='ignore', restval='', delimiter=';')
             writer.writeheader()
             DEFAULTS = {
@@ -340,10 +340,13 @@ def novedades_sku_pharma_etl():
                     row['Precio Unitario Compra'] = ''
                 writer.writerow(row)
             csv_content = buf.getvalue()
-
+            
+            d =DateHelper()
+            
             html_body = (
                 f"<p>El proceso <b>Novedades SKU</b> ha encontrado <b>{len(new_prods)}</b> productos nuevos para <b>{Vendor_Name}</b>.</p>"
                 f"<p>Se adjunta el listado en formato CSV.</p>"
+                f"<p>PUC calculado en base a YTD actual -> {d.anyomes}</p>"
             )
             subject = f"[Novedades SKU] {Vendor_Name} — {len(new_prods)} producto(s) nuevo(s)"
             mailer = ZohoMailer()
