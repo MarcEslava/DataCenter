@@ -1,3 +1,4 @@
+import base64
 import json
 import requests
 
@@ -25,7 +26,13 @@ class ZohoMailer:
             "authorization": api_key,
         }
 
-    def send(self, to: list[dict], subject: str, html_body: str) -> dict:
+    def send(self, to: list[dict], subject: str, html_body: str, attachments: list[dict] | None = None) -> dict:
+        """
+        attachments: list of dicts with keys:
+            - content: str (CSV or text content)
+            - name: str (filename, e.g. "productos.csv")
+            - mime_type: str (e.g. "text/csv")
+        """
         """Send an email.
 
         Args:
@@ -46,6 +53,15 @@ class ZohoMailer:
             "subject":  subject,
             "htmlbody": html_body,
         }
+        if attachments:
+            payload["attachments"] = [
+                {
+                    "content":   base64.b64encode(a["content"].encode()).decode(),
+                    "mime_type": a.get("mime_type", "text/csv"),
+                    "name":      a["name"],
+                }
+                for a in attachments
+            ]
         response = requests.post(ZEPTO_API_URL, json=payload, headers=self.headers)
         response.raise_for_status()
         return response.json()
