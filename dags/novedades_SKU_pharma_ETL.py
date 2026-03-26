@@ -294,6 +294,12 @@ def novedades_sku_pharma_etl():
 
             Vendor_Name  = result.get("Vendor_Name", "Unknown")
             new_prods    = result.get("new_products", [])
+            if new_prods:
+                print(f"[{Vendor_Name}] columns: {list(new_prods[0].keys())}")
+                print(f"[{Vendor_Name}] sample row: {new_prods[0]}")
+            else:
+                print(f"[{Vendor_Name}] new_products is empty")
+
 
             if not new_prods:
                 print(f"[{Vendor_Name}] No new products — skipping notification.")
