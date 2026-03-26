@@ -299,16 +299,16 @@ def novedades_sku_pharma_etl():
                 print(f"[{Vendor_Name}] No new products — skipping notification.")
                 return
 
-            rows_html = "".join(
-                f"<tr><td>{p.get('CodProducto','')}</td><td>{p.get('Producto','')}</td><td>{p.get('IdLaboratorio','')}</td></tr>"
-                for p in new_prods
-            )
+            import csv, io
+            buf = io.StringIO()
+            writer = csv.DictWriter(buf, fieldnames=['CodProducto', 'Producto', 'IdLaboratorio', 'Laboratorio'], extrasaction='ignore')
+            writer.writeheader()
+            writer.writerows(new_prods)
+            csv_content = buf.getvalue()
+
             html_body = (
-                f"<p>El proceso <b>Novedades SKU</b> ha encontrado <b>{len(new_prods)}</b> productos nuevos para <b>{Vendor_Name}</b>:</p>"
-                f"<table border='1' cellpadding='4'>"
-                f"<tr><th>CodProducto</th><th>Producto</th><th>Laboratorio</th></tr>"
-                f"{rows_html}"
-                f"</table>"
+                f"<p>El proceso <b>Novedades SKU</b> ha encontrado <b>{len(new_prods)}</b> productos nuevos para <b>{Vendor_Name}</b>.</p>"
+                f"<p>Se adjunta el listado en formato CSV.</p>"
             )
             subject = f"[Novedades SKU] {Vendor_Name} — {len(new_prods)} producto(s) nuevo(s)"
             mailer = ZohoMailer()
@@ -316,6 +316,7 @@ def novedades_sku_pharma_etl():
                 to=[{"address": "meslava@ecoceutics.com", "name": "Marc Eslava"}],
                 subject=subject,
                 html_body=html_body,
+                attachments=[{"content": csv_content, "name": f"novedades_{Vendor_Name}.csv", "mime_type": "text/csv"}],
             )
             print(f"[{Vendor_Name}] Notification sent ({len(new_prods)} new products)")
 
