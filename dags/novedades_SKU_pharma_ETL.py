@@ -279,6 +279,7 @@ def novedades_sku_pharma_etl():
             matched_by_ean  = set(pd.merge(client_prods_df, crm_prods_df, left_on='CodProducto', right_on='EAN',          how='inner')['CodProducto'])
             already_in_crm  = matched_by_code | matched_by_ean
             new_prods_df    = client_prods_df[~client_prods_df['CodProducto'].isin(already_in_crm)]
+            new_prods_df = new_prods_df.drop_duplicates(subset=['CodProducto','EAN'])
             print(f"[{Vendor_Name}] Found {len(new_prods_df)} new products not in CRM")
             return {
                 "Vendor_Name": Vendor_Name,
@@ -307,9 +308,37 @@ def novedades_sku_pharma_etl():
 
             import csv, io
             buf = io.StringIO()
-            writer = csv.DictWriter(buf, fieldnames=['CodProducto', 'Producto', 'IdLaboratorio', 'Laboratorio'], extrasaction='ignore', delimiter=';')
+            writer = csv.DictWriter(buf, fieldnames=[
+                'CodProducto', 'CodProducto', 'Producto_x', 'Laboratorio_x', 'Marca', 'GAMMA',
+                'PVL', 'IVA', 'ImporteCompraAct', 'CantidadCompraAct',
+                'Dto. Book 1', 'Dto. Book 2', 'Dto. Book 3',
+                'Unid. BOOK 1', 'Unid. BOOK 2', 'Unid. BOOK 3',
+                'Pack', 'Novedad', 'Opcional', 'Estado', 'Precio Unitario Compra',
+            ], extrasaction='ignore', restval='', delimiter=';')
             writer.writeheader()
-            writer.writerows(new_prods)
+            DEFAULTS = {
+                'Estado': 'Inactivo',
+                'Novedad': 'Si',
+                'Opcional': 'Si',
+                'Dto. Book 1':0, 
+                'Dto. Book 2':0, 
+                'Dto. Book 3':0,
+                'Unid. BOOK 1':0, 
+                'Unid. BOOK 2':0, 
+                'Unid. BOOK 3':0
+                
+            }
+
+            for row in new_prods:
+                for field, default in DEFAULTS.items():
+                    row.setdefault(field, default)
+
+            for row in new_prods:
+                try:
+                    row['Precio Unitario Compra'] = round(float(row['ImporteCompraAct']) / float(row['CantidadCompraAct']), 2)
+                except (ZeroDivisionError, TypeError, ValueError):
+                    row['Precio Unitario Compra'] = ''
+                writer.writerow(row)
             csv_content = buf.getvalue()
 
             html_body = (
