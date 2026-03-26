@@ -308,8 +308,10 @@ def novedades_sku_pharma_etl():
             matched_by_code = set(pd.merge(client_prods_df, crm_prods_df, left_on='CodProducto', right_on='Product_Code', how='inner')['CodProducto'])
             matched_by_ean  = set(pd.merge(client_prods_df, crm_prods_df, left_on='CodProducto', right_on='EAN',          how='inner')['CodProducto'])
             already_in_crm  = matched_by_code | matched_by_ean
-            new_prods_df    = client_prods_df[~client_prods_df['CodProducto'].isin(already_in_crm)]
-            new_prods_df = new_prods_df.drop_duplicates(subset=['CodProducto','EAN'])
+            new_prods_df = client_prods_df[~client_prods_df['CodProducto'].isin(already_in_crm)]
+            ean_lookup   = crm_prods_df[['Product_Code', 'EAN']].rename(columns={'Product_Code': 'CodProducto'})
+            new_prods_df = pd.merge(new_prods_df, ean_lookup, on='CodProducto', how='left')
+            new_prods_df = new_prods_df.drop_duplicates(subset=['CodProducto'])
             print(f"[{Vendor_Name}] Found {len(new_prods_df)} new products not in CRM")
             return {
                 "Vendor_Name": Vendor_Name,
@@ -317,7 +319,6 @@ def novedades_sku_pharma_etl():
                 "new_products": new_prods_df.to_dict('records'),
                 "mapped": filtered_products["mapped"],
             }
-
 
         @task
         def notify_categories(result: dict, all_contacts: list[dict]) -> None:
@@ -359,8 +360,7 @@ def novedades_sku_pharma_etl():
                 'Dto. Book 3':0,
                 'Unid. BOOK 1':0, 
                 'Unid. BOOK 2':0, 
-                'Unid. BOOK 3':0
-                
+                'Unid. BOOK 3':0 
             }
 
             for row in new_prods:
