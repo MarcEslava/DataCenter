@@ -114,7 +114,34 @@ def novedades_sku_pharma_etl():
             })
             print(f"Prepared client '{Vendor_Name}' with {len(vendors)} vendors")
         return clients
-    
+    #   2 Extract Contacts of the Vendors
+    @task
+    def extract_vendor_contacts() -> list[dict]:
+        """Extract products already on CRM to compare with SQL data."""
+        from time import sleep
+        from airflow.hooks.base import BaseHook
+        from utils.clsZohoInput import ZohoTokenManager, ZohoCRMConnector
+        import pandas as pd
+
+        conn = BaseHook.get_connection(ZOHO_CONN_ID)
+        extra = conn.extra_dejson
+        token_mgr = ZohoTokenManager(conn.login, conn.password)
+        access_token = token_mgr.get_refresh_token(extra["refresh_token"])
+
+        crm = ZohoCRMConnector(access_token)
+        all_contacts = []
+        page = 0
+        while True:
+            try:
+                batch = crm.fetch_module_data("Contacts", params={"page": page, "per_page": 200})
+                all_contacts.extend(batch)
+            except Exception:
+                break
+            sleep(0.3)
+            page += 1
+        print(f"Extracted {len(all_contacts)} total Contacts from Zoho CRM")
+        df_CRM_contacts = pd.DataFrame(all_contacts)[['First_Name', 'Full_Name', 'Email', 'Vendor_Name', 'Idioma_Comunicaciones']]
+        return df_CRM_contacts.to_dict('records')
     #   1.5 Extract products already on CRM
     @task
     def extract_crm_products() -> list[dict]:
@@ -144,6 +171,7 @@ def novedades_sku_pharma_etl():
         df_CRM_products = pd.DataFrame(all_products)[['Product_Code', 'EAN', 'Vendor_Name']]
         return df_CRM_products.to_dict('records')
 
+
     # ── 3. Extract vendor/lab mapping table from BI (once for all clients) ──
     @task
     def extract_acords() -> list[dict]:
@@ -158,7 +186,7 @@ def novedades_sku_pharma_etl():
 
     # ── 4. Per-client pipeline (runs in parallel) ─────────────
     @task_group(group_id="process_client")
-    def process_client(client_data: dict, all_acords: list[dict], all_crm_products: list[dict]):
+    def process_client(client_data: dict, all_acords: list[dict], all_crm_products: list[dict], all_contacts: list[dict]):
         """Full ETL pipeline for a single client. Mapped dynamically."""
 
         @task
@@ -182,9 +210,11 @@ def novedades_sku_pharma_etl():
             lab_groups = match['Laboratori'].unique().tolist()
             all_matched = acords_df[acords_df['Laboratori'].isin(lab_groups)].drop(columns=['lab_desc_lower'])
             bif_ids = all_matched['BIF_id'].unique().tolist()
+            vendor_id = client_data["vendor"][0].get("id", "") if client_data.get("vendor") else ""
             print(f"[{Vendor_Name}] -> group(s): {lab_groups} -> BIF_ids: {bif_ids}")
             return {
                 "Vendor_Name": Vendor_Name,
+                "vendor_id": vendor_id,
                 "laboratory_id": bif_ids,
                 "mapped": all_matched.to_dict('records'),
             }
@@ -283,24 +313,28 @@ def novedades_sku_pharma_etl():
             print(f"[{Vendor_Name}] Found {len(new_prods_df)} new products not in CRM")
             return {
                 "Vendor_Name": Vendor_Name,
+                "vendor_id": filtered_products.get("vendor_id", ""),
                 "new_products": new_prods_df.to_dict('records'),
                 "mapped": filtered_products["mapped"],
             }
 
 
         @task
-        def notify_categories(result: dict) -> None:
+        def notify_categories(result: dict, all_contacts: list[dict]) -> None:
             """Send a notification email for this vendor's new products."""
             from utils.clsZohoMailing import ZohoMailer
             from utils.clsDate import DateHelper
 
-            Vendor_Name  = result.get("Vendor_Name", "Unknown")
-            new_prods    = result.get("new_products", [])
-            if new_prods:
-                print(f"[{Vendor_Name}] columns: {list(new_prods[0].keys())}")
-                print(f"[{Vendor_Name}] sample row: {new_prods[0]}")
-            else:
-                print(f"[{Vendor_Name}] new_products is empty")
+            Vendor_Name = result.get("Vendor_Name", "Unknown")
+            vendor_id   = result.get("vendor_id", "")
+            new_prods   = result.get("new_products", [])
+
+            first_name = ""
+            if vendor_id and all_contacts:
+                contact = next((c for c in all_contacts if isinstance(c.get("Vendor_Name"), dict) and c["Vendor_Name"].get("id") == vendor_id), None)
+                if contact:
+                    first_name = contact.get("First_Name", "")
+            print(f"[{Vendor_Name}] Contact First_Name: '{first_name}'")
 
 
             if not new_prods:
@@ -310,7 +344,7 @@ def novedades_sku_pharma_etl():
             import csv, io
             buf = io.StringIO()
             writer = csv.DictWriter(buf, fieldnames=[
-                'CodProducto', 'CodProducto', 'Producto_x', 'Laboratorio_x', 'Marca', 'GAMMA',
+                'CodProducto', 'EAN', 'Producto_x', 'Laboratorio_x', 'Marca', 'GAMMA',
                 'PVL', 'IVA', 'Dto. Book 1', 'Dto. Book 2', 'Dto. Book 3',
                 'Unid. BOOK 1', 'Unid. BOOK 2', 'Unid. BOOK 3',
                 'Pack', 'Novedad', 'Opcional', 'Estado', 'Precio Unitario Compra', 'ImporteCompraAct', 'CantidadCompraAct'
@@ -339,11 +373,19 @@ def novedades_sku_pharma_etl():
                 except (ZeroDivisionError, TypeError, ValueError):
                     row['Precio Unitario Compra'] = ''
                 writer.writerow(row)
+                
+            for row in new_prods:
+                row['Producto'] = row.pop('Producto_x', '')
+                row['Laboratorio'] = row.pop('Laboratorio_x', '')
+                writer.writerow(row)
+
             csv_content = buf.getvalue()
             
             d =DateHelper()
             
+            greeting = f"<p>Hola {first_name},</p>" if first_name else ""
             html_body = (
+                f"{greeting}"
                 f"<p>El proceso <b>Novedades SKU</b> ha encontrado <b>{len(new_prods)}</b> productos nuevos para <b>{Vendor_Name}</b>.</p>"
                 f"<p>Se adjunta el listado en formato CSV.</p>"
                 f"<p>PUC calculado en base a YTD actual -> {d.anyomes}</p>"
@@ -362,13 +404,14 @@ def novedades_sku_pharma_etl():
         mapped            = map_acords(client_data, all_acords)
         filtered_products = filter_products(mapped)
         result            = new_products(all_crm_products, filtered_products)
-        notify_categories(result)
+        notify_categories(result, all_contacts)
 
     # ── Wire it all together ──────────────────────────────────
     clients      = extract_vendors()
     crm_products = extract_crm_products()
+    contacts     = extract_vendor_contacts()
     acords       = extract_acords()
-    process_client.partial(all_acords=acords, all_crm_products=crm_products).expand(client_data=clients)
+    process_client.partial(all_acords=acords, all_crm_products=crm_products, all_contacts=contacts).expand(client_data=clients)
 
 # Instantiate the DAG
 novedades_sku_pharma_etl()
