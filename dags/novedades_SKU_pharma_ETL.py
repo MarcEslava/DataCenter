@@ -301,7 +301,7 @@ def novedades_sku_pharma_etl():
 
             import csv, io
             buf = io.StringIO()
-            writer = csv.DictWriter(buf, fieldnames=['CodProducto', 'Producto', 'IdLaboratorio', 'Laboratorio'], extrasaction='ignore')
+            writer = csv.DictWriter(buf, fieldnames=['CodProducto', 'Producto', 'IdLaboratorio', 'Laboratorio'], extrasaction='ignore', delimiter=';')
             writer.writeheader()
             writer.writerows(new_prods)
             csv_content = buf.getvalue()
