@@ -141,9 +141,8 @@ def novedades_sku_pharma_etl():
             sleep(0.3)
             page += 1
         print(f"Extracted {len(all_products)} total products from Zoho CRM")
-        df_CRM_products = pd.DataFrame(all_products)
-        df_CRM_products = df_CRM_products[['Product_Code', 'EAN', 'Vendor_Name']]
-        return all_products
+        df_CRM_products = pd.DataFrame(all_products)[['Product_Code', 'EAN', 'Vendor_Name']]
+        return df_CRM_products.to_dict('records')
 
     # ── 3. Extract vendor/lab mapping table from BI (once for all clients) ──
     @task
