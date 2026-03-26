@@ -144,112 +144,6 @@ def novedades_sku_pharma_etl():
         df_CRM_products = pd.DataFrame(all_products)
         df_CRM_products = df_CRM_products[['Product_Code', 'EAN', 'Vendor_Name']]
         return all_products
-    # ── 2. Extract products (once for all clients) ──────────────
-    @task
-    def extract_products() -> list[dict]:
-        """Extract products/sales for current and previous year. Runs once."""
-        import pandas as pd
-        from utils.clsDate import DateHelper
-        try:
-            d = DateHelper()
-            curr_yy   = d.anyo
-            prev_yy   = d.offset(years=-1).anyo
-            curr_year = d.offset(years=-2).anyo
-            prev_year = d.offset(years=-2).anyo
-            fin_month = str(d.mes).zfill(2)
-            print(f"Extracting products for years: current={curr_year} ({curr_yy}), previous={prev_year} ({prev_yy})")
-
-            GROUP_BY = """
-                GROUP BY
-                    pr.codproducto, pr.desproducto, pr.codlab, pr.deslab,
-                    de.identidad, de.iddelegacion, de.delegacion,
-                    pr.idproducto, f.nombresubgrupoproducto,
-                    pr.idsuperfamilia, f.nombresuperfamiliaeco,
-                    pr.idfamilia, f.nombrefamiliaeco"""
-
-            BASE_FROM = """
-                FROM dbo.bench_dwComprasVentasMesS T1
-                INNER JOIN dbo.tme_delegaciones de ON T1.idendeS = de.idendeS
-                INNER JOIN dbo.tbi_productosERS pr ON T1.idendeS = pr.idendeS AND T1.idproducto = pr.idproducto
-                INNER JOIN dbo.vteco_familias f    ON f.idfamiliaeco = pr.idfamilia"""
-
-            BASE_COLS = """
-                    pr.codproducto AS CodProducto,
-                    pr.desproducto AS Producto,
-                    pr.codlab AS IdLaboratorio,
-                    pr.deslab AS Laboratorio,
-                    de.identidad AS IdEntidad,
-                    de.iddelegacion AS IdDelegacion,
-                    de.delegacion AS Delegacion,
-                    pr.idproducto AS IdProducto,
-                    f.nombresubgrupoproducto AS SubGrupoProducto,
-                    pr.idsuperfamilia AS IdSuperFamilia,
-                    f.nombresuperfamiliaeco AS SuperFamilia,
-                    pr.idfamilia AS IdFamilia,
-                    f.nombrefamiliaeco AS Familia"""
-
-            ECO_FILTER = "(T1.idendes IN (SELECT idendes FROM tme_delegaciones WHERE grupoCompras = 'ECO'))"
-
-            from airflow.hooks.base import BaseHook
-            from utils.clsSQL import SQLConnection
-            _conn = BaseHook.get_connection(SQL_PRODUCTS_CONN_ID)
-            db = SQLConnection(
-                db_host=_conn.host,
-                db_port=_conn.port or 1433,
-                db_database=_conn.schema,
-                db_username=_conn.login,
-                db_password=_conn.password,
-                dialect="mssql",
-                driver="pymssql",
-            )
-            with db:
-                # ── Current year ──
-                act_df = db.fech_dataframe(f"""
-                    SELECT {BASE_COLS},
-                        MIN(pr.stockActual) AS Estoc,
-                        SUM(ISNULL(T1.cantidad, 0))       AS CantidadAct,
-                        SUM(ISNULL(T1.importe, 0))        AS ImporteAct,
-                        SUM(ISNULL(T1.cantidadcompra, 0)) AS CantidadCompraAct,
-                        SUM(ISNULL(T1.importecompra, 0))  AS ImporteCompraAct
-                    {BASE_FROM}
-                    WHERE T1.anyomes >= {curr_yy}01 AND T1.anyomes <= {curr_yy}{fin_month}
-                        AND {ECO_FILTER}
-                        AND pr.codLab IN (SELECT idLab FROM BifarmaCentral.dbo.labAcuerdos WHERE anyo = {curr_year})
-                    {GROUP_BY}""")
-
-                # ── Previous year ──
-                ant_df = db.fech_dataframe(f"""
-                    SELECT {BASE_COLS},
-                        SUM(ISNULL(T1.cantidad, 0))       AS CantidadAnt,
-                        SUM(ISNULL(T1.importe, 0))        AS ImporteAnt,
-                        SUM(ISNULL(T1.cantidadcompra, 0)) AS CantidadCompraAnt,
-                        SUM(ISNULL(T1.importecompra, 0))  AS ImporteCompraAnt
-                    {BASE_FROM}
-                    WHERE T1.anyomes >= {prev_yy}01 AND T1.anyomes <= {prev_yy}{fin_month}
-                        AND {ECO_FILTER}
-                        AND pr.codLab IN (SELECT idLab FROM BifarmaCentral.dbo.labAcuerdos WHERE anyo = {prev_year})
-                    {GROUP_BY}""")
-
-            # ── Merge current + previous ──
-            MERGE_KEYS = [
-                'CodProducto', 'IdLaboratorio', 'IdEntidad',
-                'IdDelegacion', 'IdProducto',
-            ]
-            products_df = pd.merge(act_df, ant_df, on=MERGE_KEYS, how='left', suffixes=('', '_ant'))
-
-            for col in ['CantidadAnt', 'ImporteAnt', 'CantidadCompraAnt', 'ImporteCompraAnt']:
-                if col not in products_df.columns:
-                    products_df[col] = 0.0
-                products_df[col] = products_df[col].fillna(0.0)
-
-            products_df = products_df[['IdProducto', 'CodProducto','Producto', 'IdLaboratorio', 'Laboratorio']]
-
-            print(f"Extracted {len(act_df)} current + {len(ant_df)} previous year rows -> {len(products_df)} merged")
-            print("Extracted products data with columns:", products_df.columns.tolist())
-            return products_df.to_dict('records')  # codProducto, idProducto, IdLaboratorio, 
-        except Exception as e:
-            print(f"Error extracting products: {e}")
-            raise e  # Re-raise to mark the run as failed in Airflow
 
     # ── 3. Extract vendor/lab mapping table from BI (once for all clients) ──
     @task
@@ -265,7 +159,7 @@ def novedades_sku_pharma_etl():
 
     # ── 4. Per-client pipeline (runs in parallel) ─────────────
     @task_group(group_id="process_client")
-    def process_client(client_data: dict, all_products: list[dict], all_acords: list[dict], all_crm_products: list[dict]):
+    def process_client(client_data: dict, all_acords: list[dict], all_crm_products: list[dict]):
         """Full ETL pipeline for a single client. Mapped dynamically."""
 
         @task
@@ -297,22 +191,73 @@ def novedades_sku_pharma_etl():
             }
 
         @task
-        def filter_products(mapped_result: dict, all_products: list[dict]) -> dict:
-            """Filter the full products dataset to this client's labs."""
+        def filter_products(mapped_result: dict) -> dict:
+            """Query products directly for this vendor's BIF_ids."""
             import pandas as pd
-            pd.set_option('display.max_columns', None)
+            from utils.clsDate import DateHelper
+            from airflow.hooks.base import BaseHook
+            from utils.clsSQL import SQLConnection
 
-            Vendor_Name  = mapped_result["Vendor_Name"]
-            bif_ids      = mapped_result["laboratory_id"]
-            products_df  = pd.DataFrame(all_products)
-            print(f"[{Vendor_Name}] BIF_ids: {bif_ids}")
-            print(f"{products_df['IdLaboratorio'].unique()}")
-            print(f"[{Vendor_Name}] Code in products: {products_df['IdLaboratorio'].str.strip().isin(bif_ids).any()}")
-            client_products = products_df[products_df['IdLaboratorio'].str.strip().isin(bif_ids)]
-            print(f"[{Vendor_Name}] Filtered {len(client_products)} product rows from {len(products_df)} total (BIF_ids: {bif_ids})")
+            Vendor_Name = mapped_result["Vendor_Name"]
+            bif_ids     = mapped_result["laboratory_id"]
+
+            if not bif_ids:
+                print(f"[{Vendor_Name}] No BIF_ids — skipping product query")
+                return {"Vendor_Name": Vendor_Name, "products": [], "mapped": mapped_result.get("mapped", [])}
+
+            ids_str = ", ".join(f"'{x.strip()}'" for x in bif_ids)
+            d = DateHelper()
+            curr_yy   = d.anyo
+            prev_yy   = d.offset(years=-1).anyo
+            curr_year = d.offset(years=-2).anyo
+            prev_year = d.offset(years=-2).anyo
+            fin_month = str(d.mes).zfill(2)
+
+            GROUP_BY = """GROUP BY pr.codproducto, pr.desproducto, pr.codlab, pr.deslab,
+                de.identidad, de.iddelegacion, de.delegacion, pr.idproducto,
+                f.nombresubgrupoproducto, pr.idsuperfamilia, f.nombresuperfamiliaeco,
+                pr.idfamilia, f.nombrefamiliaeco"""
+            BASE_FROM = """FROM dbo.bench_dwComprasVentasMesS T1
+                INNER JOIN dbo.tme_delegaciones de ON T1.idendeS = de.idendeS
+                INNER JOIN dbo.tbi_productosERS pr ON T1.idendeS = pr.idendeS AND T1.idproducto = pr.idproducto
+                INNER JOIN dbo.vteco_familias f    ON f.idfamiliaeco = pr.idfamilia"""
+            BASE_COLS = """pr.codproducto AS CodProducto, pr.desproducto AS Producto,
+                pr.codlab AS IdLaboratorio, pr.deslab AS Laboratorio,
+                de.identidad AS IdEntidad, de.iddelegacion AS IdDelegacion,
+                pr.idproducto AS IdProducto"""
+            ECO_FILTER = "(T1.idendes IN (SELECT idendes FROM tme_delegaciones WHERE grupoCompras = 'ECO'))"
+            LAB_FILTER = f"pr.codLab IN ({ids_str})"
+
+            _conn = BaseHook.get_connection(SQL_PRODUCTS_CONN_ID)
+            db = SQLConnection(
+                db_host=_conn.host, db_port=_conn.port or 1433,
+                db_database=_conn.schema, db_username=_conn.login,
+                db_password=_conn.password, dialect="mssql", driver="pymssql",
+            )
+            with db:
+                act_df = db.fech_dataframe(f"""
+                    SELECT {BASE_COLS}, MIN(pr.stockActual) AS Estoc,
+                        SUM(ISNULL(T1.cantidad,0)) AS CantidadAct, SUM(ISNULL(T1.importe,0)) AS ImporteAct,
+                        SUM(ISNULL(T1.cantidadcompra,0)) AS CantidadCompraAct, SUM(ISNULL(T1.importecompra,0)) AS ImporteCompraAct
+                    {BASE_FROM}
+                    WHERE T1.anyomes >= {curr_yy}01 AND T1.anyomes <= {curr_yy}{fin_month}
+                        AND {ECO_FILTER} AND {LAB_FILTER} {GROUP_BY}""")
+                ant_df = db.fech_dataframe(f"""
+                    SELECT {BASE_COLS},
+                        SUM(ISNULL(T1.cantidad,0)) AS CantidadAnt, SUM(ISNULL(T1.importe,0)) AS ImporteAnt,
+                        SUM(ISNULL(T1.cantidadcompra,0)) AS CantidadCompraAnt, SUM(ISNULL(T1.importecompra,0)) AS ImporteCompraAnt
+                    {BASE_FROM}
+                    WHERE T1.anyomes >= {prev_yy}01 AND T1.anyomes <= {prev_yy}{fin_month}
+                        AND {ECO_FILTER} AND {LAB_FILTER} {GROUP_BY}""")
+
+            MERGE_KEYS = ['CodProducto', 'IdLaboratorio', 'IdEntidad', 'IdDelegacion', 'IdProducto']
+            products_df = pd.merge(act_df, ant_df, on=MERGE_KEYS, how='left')
+            for col in ['CantidadAnt', 'ImporteAnt', 'CantidadCompraAnt', 'ImporteCompraAnt']:
+                products_df[col] = products_df.get(col, pd.Series(dtype=float)).fillna(0.0)
+            print(f"[{Vendor_Name}] {len(products_df)} products for BIF_ids {bif_ids}")
             return {
                 "Vendor_Name": Vendor_Name,
-                "products": client_products.to_dict('records'),
+                "products": products_df.to_dict('records'),
                 "mapped": mapped_result["mapped"],
             }
 
@@ -377,16 +322,15 @@ def novedades_sku_pharma_etl():
 
         # Wire the per-client pipeline
         mapped            = map_acords(client_data, all_acords)
-        filtered_products = filter_products(mapped, all_products)
+        filtered_products = filter_products(mapped)
         result            = new_products(all_crm_products, filtered_products)
         notify_categories(result)
 
     # ── Wire it all together ──────────────────────────────────
-    products     = extract_products()
     clients      = extract_vendors()
     crm_products = extract_crm_products()
     acords       = extract_acords()
-    process_client.partial(all_products=products, all_acords=acords, all_crm_products=crm_products).expand(client_data=clients)
+    process_client.partial(all_acords=acords, all_crm_products=crm_products).expand(client_data=clients)
 
 # Instantiate the DAG
 novedades_sku_pharma_etl()
