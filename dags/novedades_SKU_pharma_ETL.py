@@ -321,9 +321,12 @@ def novedades_sku_pharma_etl():
             matched_by_ean  = set(pd.merge(client_prods_df, crm_prods_df, left_on='CodProducto', right_on='EAN',          how='inner')['CodProducto'])
             already_in_crm  = matched_by_code | matched_by_ean
             new_prods_df = client_prods_df[~client_prods_df['CodProducto'].isin(already_in_crm)]
+            print(f'{new_prods_df.columns}')
             ean_lookup   = crm_prods_df[['Product_Code', 'EAN']].rename(columns={'Product_Code': 'CodProducto'})
             new_prods_df = pd.merge(new_prods_df, ean_lookup, on='CodProducto', how='left')
             new_prods_df = new_prods_df.drop_duplicates(subset=['CodProducto'])
+            new_prods_df = new_prods_df.rename(columns={'Producto_x':'Producto', 'Laboratorio_x':'Laboratorio'})
+            new_prods_df = new_prods_df['CodProducto']
             print(f"[{Vendor_Name}] Found {len(new_prods_df)} new products not in CRM")
             return {
                 "Vendor_Name": Vendor_Name,
@@ -361,7 +364,7 @@ def novedades_sku_pharma_etl():
             import csv, io
             buf = io.StringIO()
             writer = csv.DictWriter(buf, fieldnames=[
-                'CodProducto', 'EAN', 'Producto_x', 'Laboratorio_x', 'Marca', 'GAMMA',
+                'CodProducto', 'EAN', 'Producto', 'Producto_y', 'Laboratorio', 'Laboratorio_y', 'Marca', 'GAMMA',
                 'PVL', 'IVA', 'Dto. Book 1', 'Dto. Book 2', 'Dto. Book 3',
                 'Unid. BOOK 1', 'Unid. BOOK 2', 'Unid. BOOK 3',
                 'Pack', 'Novedad', 'Opcional', 'Estado', 'Precio Unitario Compra', 'ImporteCompraAct', 'CantidadCompraAct'
