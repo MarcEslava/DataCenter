@@ -300,7 +300,11 @@ def novedades_sku_pharma_etl():
             client_prods_df = pd.DataFrame(filtered_products["products"])
             crm_prods_df    = pd.DataFrame(all_crm_products)
             print(f"[{Vendor_Name}] Comparing {len(client_prods_df)} client products against {len(crm_prods_df)} CRM products")
-            
+
+            if client_prods_df.empty:
+                print(f"[{Vendor_Name}] No client products — skipping.")
+                return {"Vendor_Name": Vendor_Name, "vendor_id": filtered_products.get("vendor_id", ""), "new_products": [], "mapped": filtered_products["mapped"]}
+
             client_prods_df['CodProducto'] = pd.to_numeric(client_prods_df['CodProducto'], errors='coerce').round(0)
             crm_prods_df['Product_Code'] = pd.to_numeric(crm_prods_df['Product_Code'], errors='coerce').round(0)
             crm_prods_df['EAN'] = pd.to_numeric(crm_prods_df['EAN']).fillna(0).round(0) 
@@ -406,12 +410,58 @@ def novedades_sku_pharma_etl():
         result            = new_products(all_crm_products, filtered_products)
         notify_categories(result, all_contacts)
 
+    @task(trigger_rule="all_done")
+    def notify_summary(**context):
+        """Send one summary email with new product counts per vendor."""
+        from airflow.models import XCom
+        from airflow.utils.session import create_session
+        from utils.clsZohoMailing import ZohoMailer
+
+        run_id = context["run_id"]
+        with create_session() as session:
+            records = session.query(XCom).filter(
+                XCom.run_id == run_id,
+                XCom.task_id.like("process_client.new_products%"),
+            ).all()
+
+        rows = []
+        for r in sorted(records, key=lambda x: x.task_id):
+            value = r.value if isinstance(r.value, dict) else {}
+            vendor   = value.get("Vendor_Name", r.task_id)
+            count    = len(value.get("new_products", []))
+            rows.append((vendor, count))
+
+        if not rows:
+            print("No XCom results found — skipping summary email.")
+            return
+
+        table_rows = "".join(
+            f"<tr><td>{vendor}</td><td style='text-align:center'>{count if count > 0 else '—'}</td></tr>"
+            for vendor, count in rows
+        )
+        html_body = (
+            f"<p>Resumen del proceso <b>Novedades SKU</b>:</p>"
+            f"<table border='1' cellpadding='4' cellspacing='0'>"
+            f"<tr><th>Proveedor</th><th>Nuevos productos</th></tr>"
+            f"{table_rows}"
+            f"</table>"
+        )
+        total = sum(c for _, c in rows)
+        subject = f"[Novedades SKU] Resumen — {total} producto(s) nuevo(s) en {len(rows)} proveedor(es)"
+        ZohoMailer().send(
+            to=[{"address": "meslava@ecoceutics.com", "name": "Marc Eslava"}],
+            subject=subject,
+            html_body=html_body,
+        )
+        print(f"Summary sent: {len(rows)} vendors, {total} new products total")
+
     # ── Wire it all together ──────────────────────────────────
     clients      = extract_vendors()
     crm_products = extract_crm_products()
     contacts     = extract_vendor_contacts()
     acords       = extract_acords()
     process_client.partial(all_acords=acords, all_crm_products=crm_products, all_contacts=contacts).expand(client_data=clients)
+    notify_summary()
 
 # Instantiate the DAG
 novedades_sku_pharma_etl()
