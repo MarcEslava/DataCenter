@@ -56,7 +56,7 @@ def _query_sql(conn_id: str, sql: str, dialect: str):
 @dag(
     dag_id='novedades_SKU_pharma_ETL',
     description='ETL for Pharma SKU updates from Zoho per client',
-    schedule= Variable.get("novedades_sku_pharma_schedule", default_var="0 2 * * *"),  # default: daily at 2am
+    schedule= Variable.get("novedades_sku_pharma_schedule", default_var="0 2 1 * *"),  # default: 2am on 1st of each month
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_tasks=1,  # limit parallelism to avoid overloading sources
