@@ -210,11 +210,16 @@ def novedades_sku_pharma_etl():
             lab_groups = match['Laboratori'].unique().tolist()
             all_matched = acords_df[acords_df['Laboratori'].isin(lab_groups)].drop(columns=['lab_desc_lower'])
             bif_ids = all_matched['BIF_id'].unique().tolist()
-            vendor_id = client_data["vendor"][0].get("id", "") if client_data.get("vendor") else ""
+            first_vendor = client_data["vendor"][0] if client_data.get("vendor") else {}
+            vendor_id    = first_vendor.get("id", "")
+            cm_email     = first_vendor.get("category_manager_email", "")
+            cm_name      = first_vendor.get("category_manager_name", "")
             print(f"[{Vendor_Name}] -> group(s): {lab_groups} -> BIF_ids: {bif_ids}")
             return {
                 "Vendor_Name": Vendor_Name,
                 "vendor_id": vendor_id,
+                "cm_email": cm_email,
+                "cm_name": cm_name,
                 "laboratory_id": bif_ids,
                 "mapped": all_matched.to_dict('records'),
             }
@@ -232,7 +237,7 @@ def novedades_sku_pharma_etl():
 
             if not bif_ids:
                 print(f"[{Vendor_Name}] No BIF_ids — skipping product query")
-                return {"Vendor_Name": Vendor_Name, "products": [], "mapped": mapped_result.get("mapped", [])}
+                return {"Vendor_Name": Vendor_Name, "vendor_id": mapped_result.get("vendor_id", ""), "cm_email": mapped_result.get("cm_email", ""), "cm_name": mapped_result.get("cm_name", ""), "products": [], "mapped": mapped_result.get("mapped", [])}
 
             ids_str = ", ".join(f"'{x.strip()}'" for x in bif_ids)
             d = DateHelper()
@@ -286,6 +291,9 @@ def novedades_sku_pharma_etl():
             print(f"[{Vendor_Name}] {len(products_df)} products for BIF_ids {bif_ids}")
             return {
                 "Vendor_Name": Vendor_Name,
+                "vendor_id": mapped_result.get("vendor_id", ""),
+                "cm_email": mapped_result.get("cm_email", ""),
+                "cm_name": mapped_result.get("cm_name", ""),
                 "products": products_df.to_dict('records'),
                 "mapped": mapped_result["mapped"],
             }
@@ -320,6 +328,8 @@ def novedades_sku_pharma_etl():
             return {
                 "Vendor_Name": Vendor_Name,
                 "vendor_id": filtered_products.get("vendor_id", ""),
+                "cm_email": filtered_products.get("cm_email", ""),
+                "cm_name": filtered_products.get("cm_name", ""),
                 "new_products": new_prods_df.to_dict('records'),
                 "mapped": filtered_products["mapped"],
             }
@@ -332,6 +342,8 @@ def novedades_sku_pharma_etl():
 
             Vendor_Name = result.get("Vendor_Name", "Unknown")
             vendor_id   = result.get("vendor_id", "")
+            cm_email    = result.get("cm_email", "")
+            cm_name     = result.get("cm_name", "")
             new_prods   = result.get("new_products", [])
 
             first_name = ""
@@ -397,7 +409,7 @@ def novedades_sku_pharma_etl():
             subject = f"[Novedades SKU] {Vendor_Name} — {len(new_prods)} producto(s) nuevo(s)"
             mailer = ZohoMailer()
             mailer.send(
-                to=[{"address": "meslava@ecoceutics.com", "name": "Marc Eslava"}],
+                to=[{"address": cm_email, "name": cm_name}] if cm_email else [{"address": "meslava@ecoceutics.com", "name": "Marc Eslava"}],
                 subject=subject,
                 html_body=html_body,
                 attachments=[{"content": csv_content, "name": f"novedades_{Vendor_Name}.csv", "mime_type": "text/csv"}],
