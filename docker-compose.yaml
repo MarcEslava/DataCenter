@@ -32,6 +32,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-tcDqV0CAB6yubbpSpxjdIA==}
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:-jpI3a/LHtBgnJZ8KUx90zg==}
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__HOSTNAME_CALLABLE: "socket.getfqdn"
     AIRFLOW__LOGGING__LOGGING_LEVEL: ERROR
     AIRFLOW__WEBSERVER__LOG_FETCH_TIMEOUT_SEC: "15"
     AIRFLOW__WEBSERVER__BASE_URL: http://datahub.local/airflow
@@ -235,6 +236,7 @@ services:
   dag-processor:
     <<: *airflow-common
     command: bash -lc "exec airflow dag-processor"
+    hostname: dag-processor
     environment:
       <<: *airflow-common-env
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://apiserver:8080/execution/
