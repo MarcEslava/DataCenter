@@ -25,7 +25,7 @@ x-airflow-common: &airflow-common
   <<: *common
   image: apache/airflow:3.0.1
   environment: &airflow-common-env
-    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-microsoft-mssql pymssql"
+    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-microsoft-mssql pymssql xlsxwriter"
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:-this_is_a_very_secured_key_change_in_production}
@@ -34,6 +34,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-tcDqV0CAB6yubbpSpxjdIA==}
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:-jpI3a/LHtBgnJZ8KUx90zg==}
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__HOSTNAME_CALLABLE: "socket.getfqdn"
     AIRFLOW__LOGGING__LOGGING_LEVEL: ERROR
     AIRFLOW__WEBSERVER__BASE_URL: ${AIRFLOW_BASE_URL:-http://datahub.local/airflow}
     FORWARDED_ALLOW_IPS: "*"
@@ -223,6 +224,7 @@ services:
   dag-processor:
     <<: *airflow-common
     command: bash -lc "exec airflow dag-processor"
+    hostname: dag-processor
     environment:
       <<: *airflow-common-env
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://apiserver:8080/execution/
