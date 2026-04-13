@@ -176,11 +176,11 @@ def novedades_sku_pharma_etl():
     @task
     def extract_acords() -> list[dict]:
         """Extract the vendor-to-lab mapping table from BI. Runs ONCE."""
-        df = _query_sql(SQL_ACORDS_CONN_ID, "SELECT * FROM VendorMapping", dialect="mysql")
+        df = _query_sql(SQL_ACORDS_CONN_ID, "SELECT * FROM Vendors", dialect="mysql")
         # Convert datetime columns to ISO strings so XCom can serialize them
         for col in df.select_dtypes(include=["datetime", "datetimetz"]).columns:
             df[col] = df[col].astype(str)
-        print(f"Extracted {len(df)} rows from VendorMapping")
+        print(f"Extracted {len(df)} rows from Vendors")
         print("Extracted acordes data with columns:", df.columns.tolist())
         return df.to_dict('records')
 
@@ -326,7 +326,6 @@ def novedades_sku_pharma_etl():
             new_prods_df = pd.merge(new_prods_df, ean_lookup, on='CodProducto', how='left')
             new_prods_df = new_prods_df.drop_duplicates(subset=['CodProducto'])
             new_prods_df = new_prods_df.rename(columns={'Producto_x':'Producto', 'Laboratorio_x':'Laboratorio'})
-            new_prods_df = new_prods_df['CodProducto']
             print(f"[{Vendor_Name}] Found {len(new_prods_df)} new products not in CRM")
             return {
                 "Vendor_Name": Vendor_Name,
@@ -428,22 +427,19 @@ def novedades_sku_pharma_etl():
     @task(trigger_rule="all_done")
     def notify_summary(**context):
         """Send one summary email with new product counts per vendor."""
-        from airflow.models import XCom
-        from airflow.utils.session import create_session
         from utils.clsZohoMailing import ZohoMailer
 
-        run_id = context["run_id"]
-        with create_session() as session:
-            records = session.query(XCom).filter(
-                XCom.run_id == run_id,
-                XCom.task_id.like("process_client.new_products%"),
-            ).all()
+        ti          = context["ti"]
+        all_results = ti.xcom_pull(task_ids="process_client.new_products") or []
+        if not isinstance(all_results, list):
+            all_results = [all_results] if all_results else []
 
         rows = []
-        for r in sorted(records, key=lambda x: x.task_id):
-            value = r.value if isinstance(r.value, dict) else {}
-            vendor   = value.get("Vendor_Name", r.task_id)
-            count    = len(value.get("new_products", []))
+        for value in all_results:
+            if not isinstance(value, dict):
+                continue
+            vendor = value.get("Vendor_Name", "Unknown")
+            count  = len(value.get("new_products", []))
             rows.append((vendor, count))
 
         if not rows:

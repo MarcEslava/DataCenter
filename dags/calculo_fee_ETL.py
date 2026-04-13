@@ -7,6 +7,7 @@ Parameters:
     rappel (str): Book sheet name, e.g. "BIFARMA" or "BIFARMA con BAJAS"
     period (str): "" for monthly, "YTD" for year-to-date
 """
+import os
 from airflow.decorators import dag, task
 from airflow.models import Variable
 from datetime import datetime, timedelta
@@ -152,8 +153,6 @@ def calculo_fee_etl():
         d = DateHelper().offset(months=-1)
         curr_yy   = d.anyo
         prev_yy   = d.offset(years=-1).anyo
-        curr_year = d.offset(years=-2).anyo
-        prev_year = d.offset(years=-2).anyo
         fin_month = str(d.mes).zfill(2)
 
         GROUP_BY = """
@@ -204,7 +203,7 @@ def calculo_fee_etl():
                 {BASE_FROM}
                 WHERE T1.anyomes >= {curr_yy}01 AND T1.anyomes <= {curr_yy}{fin_month}
                     AND {ECO_FILTER}
-                    AND pr.codLab IN (SELECT idLab FROM BifarmaCentral.dbo.labAcuerdos WHERE anyo = {curr_year})
+                    AND pr.codLab IN (SELECT idLabMaster FROM BifarmaCentral.dbo.ZohoLaboratorios)
                 {GROUP_BY}""")
 
             ant_df = db.fech_dataframe(f"""
@@ -216,7 +215,7 @@ def calculo_fee_etl():
                 {BASE_FROM}
                 WHERE T1.anyomes >= {prev_yy}01 AND T1.anyomes <= {prev_yy}{fin_month}
                     AND {ECO_FILTER}
-                    AND pr.codLab IN (SELECT idLab FROM BifarmaCentral.dbo.labAcuerdos WHERE anyo = {prev_year})
+                    AND pr.codLab IN (SELECT idLabMaster FROM BifarmaCentral.dbo.ZohoLaboratorios)
                 {GROUP_BY}""")
 
         MERGE_KEYS = ['CodProducto', 'IdLaboratorio', 'IdEntidad', 'IdDelegacion', 'IdProducto']
@@ -363,8 +362,8 @@ def calculo_fee_etl():
             _lm['PVL']      = _lm['Decimal_1']
             _lm['IVA']      = pd.to_numeric(_lm['IVA2'], errors='coerce') / 100
             _lm['MARCA']    = _lm['Marca']
-            _lm['SUBMARCA'] = _lm['Gama']
-            s.list_anterior = _lm[["Cod Unif", 'PVL', "IVA", "MARCA", "SUBMARCA"]]
+            _lm['GAMA'] = _lm['Gama']
+            s.list_anterior = _lm[["Cod Unif", 'PVL', "IVA", "MARCA", "GAMA"]]
             s.list_anterior.drop_duplicates(inplace=True)
             s.df_bifarma_books.loc[:, 'Cod Unif'] = pd.to_numeric(s.df_bifarma_books['Cod Unif'], errors='coerce')
             s.list_anterior = s.list_anterior.copy()
@@ -445,8 +444,8 @@ def calculo_fee_etl():
         MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 
         NUM_COLS = [
-            'SO (Ud)\nAct', 'SO (€)\nAct', 'SO (Ud)\nAnt', 'SO (€)\nAnt',
-            'SI (Ud)\nAct', 'SI (€)\nAct', 'SI (Ud)\nAnt', 'SI (€)\nAnt',
+            'SO (Ud)\nAct', 'SO (Ud)\nAnt', 'SO (€)\nAct', 'SO (€)\nAnt',
+            'SI (Ud)\nAct', 'SI (Ud)\nAnt', 'SI (€)\nAct', 'SI (€)\nAnt',
             'Stock\nactual',
         ]
         for _c in NUM_COLS:
@@ -486,16 +485,18 @@ def calculo_fee_etl():
             agg_cols = [c for c in NUM_COLS if c in df_chunk.columns]
             summary = df_chunk.groupby(group_col, dropna=False)[agg_cols].sum().reset_index()
             if 'NIF' in summary.columns:
+                dedup_keys = [k for k in ['NIF', 'Producto'] if k in summary.columns]
                 num_s = summary.select_dtypes(include='number').columns.tolist()
-                txt_s = [c for c in summary.columns if c not in num_s and c != 'NIF']
-                summary = summary.groupby('NIF').agg(
+                txt_s = [c for c in summary.columns if c not in num_s and c not in dedup_keys]
+                summary = summary.groupby(dedup_keys).agg(
                     {**{c: 'sum' for c in num_s}, **{c: 'first' for c in txt_s}}
                 ).reset_index()
                 orig_order = [c for c in group_col if c in summary.columns] + \
                              [c for c in agg_cols if c in summary.columns]
                 summary = summary[[c for c in orig_order if c in summary.columns]]
-            if 'Nombre Oficina' in summary.columns:
-                summary = summary.sort_values('Nombre Oficina', ascending=True, na_position='last').reset_index(drop=True)
+            sort_cols = [c for c in ['Nombre Oficina', 'Producto'] if c in summary.columns]
+            if sort_cols:
+                summary = summary.sort_values(sort_cols, ascending=True, na_position='last').reset_index(drop=True)
             has_so = 'SO (€)\nAct' in summary.columns and 'SO (€)\nAnt' in summary.columns
             has_si = 'SI (€)\nAct' in summary.columns and 'SI (€)\nAnt' in summary.columns
             if has_so:
@@ -505,8 +506,9 @@ def calculo_fee_etl():
             summary.to_excel(writer, sheet_name=sheet_name, index=False, na_rep="#N/D")
             ws = writer.sheets[sheet_name]
             n_rows, n_cols = summary.shape
+            table_name = sheet_name.replace(' ', '_')
             ws.add_table(0, 0, n_rows, n_cols - 1, {
-                'name':    sheet_name.replace(' ', '_'),
+                'name':    table_name,
                 'style':   'Table Style Medium 18',
                 'columns': [{'header': c} for c in summary.columns],
             })
@@ -541,7 +543,11 @@ def calculo_fee_etl():
                 cre_i = cols.index('Crecimiento SI (%)')
                 ws.write_formula(n_rows + 1, cre_i, f'=IF({ant_l}{total_r}=0,0,({act_l}{total_r}-{ant_l}{total_r})/{ant_l}{total_r})', fmt_pct_bold)
             _autofit(ws, summary, col_fmt)
+            return n_rows, list(summary.columns)
 
+        TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), 'templates', 'parafarmacia_template.xlsx')
+
+        
         def _send_chunk(df_chunk, lab, safe_name, part_label):
             from xlsxwriter.utility import xl_col_to_name
             buf = io.BytesIO()
@@ -551,7 +557,7 @@ def calculo_fee_etl():
             fmt_pct      = wb.add_format({'num_format': '0.00%'})
 
             CURRENCY_COLS = ('Importe Fee', 'Importe Información', 'Importe Marketing', 'Compra PUC', 'Compra PVL')
-            PCT_COLS      = ('Fee Fijo', 'Fee Información', 'Fee Marketing')
+            PCT_COLS      = ('Fee Fijo', 'Fee Información', 'Fee Marketing', 'Fee Variable')
 
             def _col_fmt(col_name):
                 if '€' in col_name or col_name in CURRENCY_COLS or col_name.startswith('Base Calculo'):
@@ -566,8 +572,8 @@ def calculo_fee_etl():
                 if '%' in col_name or col_name in PCT_COLS:
                     return '0.00%'
                 return 'General'
-            df_chunk.to_excel(writer, sheet_name="SI Acord book", index=False, header=True, na_rep="#N/D")
-            ws  = writer.sheets["SI Acord book"]
+            df_chunk.to_excel(writer, sheet_name="Acuerdo book", index=False, header=True, na_rep="#N/D")
+            ws  = writer.sheets["Acuerdo book"]
             cols = list(df_chunk.columns)
             def _cl(name): return xl_col_to_name(cols.index(name))
             # extend cols with calculated columns before building the table
@@ -578,7 +584,7 @@ def calculo_fee_etl():
             df_extended['Compra PUC'] = pd.to_numeric(df_chunk.get('SI (€)\nAct'), errors='coerce') / (1 + pd.to_numeric(df_chunk.get('IVA'), errors='coerce').fillna(0))
             df_extended['Compra PVL'] = pd.to_numeric(df_chunk.get('PVL'), errors='coerce').fillna(0) * pd.to_numeric(df_chunk.get('SI (Ud)\nAct'), errors='coerce')
             ws.add_table(0, 0, n_rows_main, n_cols_main - 1, {
-                'name':    'SI_Acord_book',
+                'name':    'Acuerdo_book',
                 'style':   'Table Style Medium 1',
                 'columns': [{'header': c} for c in df_extended.columns],
             })
@@ -591,8 +597,8 @@ def calculo_fee_etl():
                 ws.write_formula(i + 1, pvl_idx, f'={_cl("PVL")}{r}*{_cl("SI (Ud)\nAct")}{r}', _col_fmt('Compra PVL'))
             _write_subtotals(ws, writer.book, df_extended, ['Nombre Oficina'], n_rows_main, _col_num_format)
             _autofit(ws, df_extended, _col_fmt)
-            _write_summary_sheet(writer, df_chunk, ['Nombre Oficina', 'NIF', 'BOOK'],                              'Por Farmacia', _col_fmt, _col_num_format)
-            _write_summary_sheet(writer, df_chunk, ['Codigo de Producto', 'Producto', 'MARCA', 'SUBMARCA'],        'Por Producto', _col_fmt, _col_num_format)
+            pf_n_rows, pf_cols = _write_summary_sheet(writer, df_chunk, ['Nombre Oficina', 'NIF', 'BOOK', 'Producto', 'MARCA', 'GAMA'], 'Por Farmacia', _col_fmt, _col_num_format)
+            _write_summary_sheet(writer, df_chunk, ['Codigo de Producto', 'Producto', 'MARCA', 'GAMA'], 'Por Producto', _col_fmt, _col_num_format)
 
             # ── Base Fee sheet (quarterly: months 3, 6, 9, 12 only) ─────────────
             if d.mes % 3 == 0:
@@ -600,7 +606,7 @@ def calculo_fee_etl():
                 _df['Compra PUC'] = pd.to_numeric(_df['SI (€)\nAct'], errors='coerce') / (1 + pd.to_numeric(_df['IVA'], errors='coerce').fillna(0))
                 _df['Compra PVL'] = pd.to_numeric(_df['PVL'], errors='coerce').fillna(0) * pd.to_numeric(_df['SI (Ud)\nAct'], errors='coerce')
                 base_agg = _df.groupby(['Nombre Oficina', 'NIF'], dropna=False)[['Compra PUC', 'Compra PVL']].sum().reset_index()
-                acords_ref = s.df_vendors[['BotPlus', 'Base_Calculo_Bruta_Neta', 'Fee_Fijo1', 'Fee_Informaci_n1', 'Fee_Marketing', 'Fee_Fijo_Minimo', 'Fee_Marketing_Minimo']].drop_duplicates('BotPlus').rename(columns={'BotPlus': 'BIF_id'})
+                acords_ref = s.df_vendors[['BotPlus', 'Base_Calculo_Bruta_Neta', 'Fee_Fijo1', 'Fee_Informaci_n1', 'Fee_Marketing', 'Fee_Fijo_Minimo', 'Fee_Marketing_Minimo', 'Incremento_1', 'Incremento_2', 'Incremento_3', 'Fee_Variable_11', 'Fee_Variable_21', 'Fee_Variable_31']].drop_duplicates('BotPlus').rename(columns={'BotPlus': 'BIF_id'})
                 lab_per_farm = _df[['Nombre Oficina', 'Id Lab']].drop_duplicates('Nombre Oficina')
                 base_agg = base_agg.merge(lab_per_farm, on='Nombre Oficina', how='left')
                 base_agg = base_agg.merge(acords_ref, left_on='Id Lab', right_on='BIF_id', how='left').drop(columns=['BIF_id'], errors='ignore')
@@ -622,13 +628,23 @@ def calculo_fee_etl():
                 base_agg['Importe Fee']         = float('nan')
                 base_agg['Fee Información']     = pd.to_numeric(base_agg['Fee_Informaci_n1'], errors='coerce').fillna(0) / 100
                 base_agg['Importe Información'] = float('nan')
-                base_agg['Fee Marketing']       = pd.to_numeric(base_agg['Fee_Marketing'], errors='coerce').fillna(0) / 100
-                base_agg['Importe Marketing']   = float('nan')
                 non_group = ['Nombre Oficina', 'NIF', 'Calculo Bruto/Neto']
-                base_out = base_agg[['Nombre Oficina', 'NIF', 'Calculo Bruto/Neto', base_calc_col,
-                                      'Fee Fijo', 'Importe Fee',
-                                      'Fee Información', 'Importe Información',
-                                      'Fee Marketing', 'Importe Marketing']]
+                fee_cols = ['Fee Fijo', 'Importe Fee', 'Fee Información', 'Importe Información']
+                if d.mes % 6 == 0:
+                    base_agg['Fee Marketing']     = pd.to_numeric(base_agg['Fee_Marketing'], errors='coerce').fillna(0) / 100
+                    base_agg['Importe Marketing'] = float('nan')
+                    fee_cols += ['Fee Marketing', 'Importe Marketing']
+                # Fee Variable — bracket thresholds and rates are lab-level scalars
+                i1  = pd.to_numeric(base_agg['Incremento_1'],   errors='coerce').fillna(0).iloc[0] / 100
+                i2  = pd.to_numeric(base_agg['Incremento_2'],   errors='coerce').fillna(0).iloc[0] / 100
+                i3  = pd.to_numeric(base_agg['Incremento_3'],   errors='coerce').fillna(0).iloc[0] / 100
+                fv1 = pd.to_numeric(base_agg['Fee_Variable_11'], errors='coerce').fillna(0).iloc[0] / 100
+                fv2 = pd.to_numeric(base_agg['Fee_Variable_21'], errors='coerce').fillna(0).iloc[0] / 100
+                fv3 = pd.to_numeric(base_agg['Fee_Variable_31'], errors='coerce').fillna(0).iloc[0] / 100
+                base_agg['Fee Variable']     = float('nan')
+                base_agg['Importe Variable'] = float('nan')
+                base_out = base_agg[['Nombre Oficina', 'NIF', base_calc_col] + fee_cols +
+                                     ['Fee Variable', 'Importe Variable']]
                 base_out.to_excel(writer, sheet_name='Base Fee', index=False, na_rep='#N/D')
                 ws_bc = writer.sheets['Base Fee']
                 n_r, n_c = base_out.shape
@@ -639,18 +655,40 @@ def calculo_fee_etl():
                 })
                 bc_cols = list(base_out.columns)
                 bc_l    = xl_col_to_name(bc_cols.index(base_calc_col))
-                for imp_col, fee_col in [('Importe Fee', 'Fee Fijo'), ('Importe Información', 'Fee Información'), ('Importe Marketing', 'Fee Marketing')]:
+                all_importe_pairs = [('Importe Fee', 'Fee Fijo'), ('Importe Información', 'Fee Información'), ('Importe Marketing', 'Fee Marketing')]
+                fmt_eur = writer.book.add_format({'num_format': '#,##0.00 "€"'})
+                for imp_col, fee_col in all_importe_pairs:
+                    if imp_col not in bc_cols:
+                        continue
                     imp_i = bc_cols.index(imp_col)
                     fee_l = xl_col_to_name(bc_cols.index(fee_col))
-                    fmt   = writer.book.add_format({'num_format': '#,##0.00 "€"'})
                     for i in range(n_r):
                         r = i + 2
-                        ws_bc.write_formula(i + 1, imp_i, f'={bc_l}{r}*{fee_l}{r}', fmt)
+                        ws_bc.write_formula(i + 1, imp_i, f'={bc_l}{r}*{fee_l}{r}', fmt_eur)
+                # Fee Variable: growth from Por Farmacia TOTALES row (lab-level, same for every row)
+                fmt_pct  = writer.book.add_format({'num_format': '0.00%'})
+                pf_tot_r = pf_n_rows + 2  # Excel 1-indexed TOTALES row in Por Farmacia
+                act_ref  = f"'Por Farmacia'!{xl_col_to_name(pf_cols.index('SO (€)\nAct'))}{pf_tot_r}"
+                ant_ref  = f"'Por Farmacia'!{xl_col_to_name(pf_cols.index('SO (€)\nAnt'))}{pf_tot_r}"
+                growth   = f'({act_ref}-{ant_ref})/{ant_ref}'
+                bracket  = (
+                    f'IF(AND({ant_ref}>0,{growth}>={i3}),{fv3},'
+                    f'IF(AND({ant_ref}>0,{growth}>={i2}),{fv2},'
+                    f'IF(AND({ant_ref}>0,{growth}>={i1}),{fv1},0)))'
+                )
+                fv_i    = bc_cols.index('Fee Variable')
+                imp_v_i = bc_cols.index('Importe Variable')
+                for i in range(n_r):
+                    r = i + 2
+                    ws_bc.write_formula(i + 1, fv_i,    f'={bracket}',                              fmt_pct)
+                    ws_bc.write_formula(i + 1, imp_v_i, f'={bc_l}{r}*{xl_col_to_name(fv_i)}{r}',   fmt_eur)
                 _write_subtotals(ws_bc, writer.book, base_out, non_group, n_r, _col_num_format)
                 # overwrite Importe totals with minimum-aware formula
                 fmt_bold_eur = writer.book.add_format({'num_format': '#,##0.00 "€"', 'bold': True})
                 total_row_idx = n_r + 1
                 for imp_col, minimo_field in [('Importe Fee', 'Fee_Fijo_Minimo'), ('Importe Marketing', 'Fee_Marketing_Minimo')]:
+                    if imp_col not in bc_cols:
+                        continue
                     minimo_val = pd.to_numeric(base_agg[minimo_field], errors='coerce').fillna(0).iloc[0]
                     if minimo_val > 0:
                         threshold   = minimo_val / d.mes
@@ -660,8 +698,9 @@ def calculo_fee_etl():
                                             f'=IF({sub}<{threshold},{minimo_val},{sub})',
                                             fmt_bold_eur)
                 _autofit(ws_bc, base_out, _col_fmt)
-            writer.sheets["Por Farmacia"].activate()
-            writer.sheets["SI Acord book"].hide()
+            writer.sheets["Por Farmacia"].active()
+            writer.sheets["Por Producto"].hide()
+            writer.sheets["Acuerdo book"].hide()
 
             # Owner from Zoho Vendors (matched by BotPlus == Id Lab)
             lab_ids = _df['Id Lab'].dropna().unique().tolist()
@@ -682,6 +721,7 @@ def calculo_fee_etl():
                 owner_email = 'meslava@ecoceutics.com'
 
             writer.close()
+            buf = _inject_pivot_sheets(buf)
             size_mb = len(buf.getvalue()) / 1024 / 1024
             print(f"Sending [{lab}{part_label}]: {len(df_chunk)} rows ({size_mb:.1f} MB)")
             html_body = f"""
@@ -718,7 +758,7 @@ Hygie31 España<br>
 
             # probe size with full df first
             probe = io.BytesIO()
-            df_lab.to_excel(probe, sheet_name="SI Acord book", index=False, header=True, engine='xlsxwriter', na_rep="#N/D")
+            df_lab.to_excel(probe, sheet_name="Acuerdo book", index=False, header=True, engine='xlsxwriter', na_rep="#N/D")
             if len(probe.getvalue()) <= MAX_BYTES:
                 _send_chunk(df_lab, lab, safe_name, "")
             else:
