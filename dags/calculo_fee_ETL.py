@@ -7,6 +7,7 @@ Parameters:
     rappel (str): Book sheet name, e.g. "BIFARMA" or "BIFARMA con BAJAS"
     period (str): "" for monthly, "YTD" for year-to-date
 """
+import os
 from airflow.decorators import dag, task
 from airflow.models import Variable
 from datetime import datetime, timedelta
@@ -544,6 +545,9 @@ def calculo_fee_etl():
             _autofit(ws, summary, col_fmt)
             return n_rows, list(summary.columns)
 
+        TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), 'templates', 'parafarmacia_template.xlsx')
+
+        
         def _send_chunk(df_chunk, lab, safe_name, part_label):
             from xlsxwriter.utility import xl_col_to_name
             buf = io.BytesIO()
@@ -568,8 +572,8 @@ def calculo_fee_etl():
                 if '%' in col_name or col_name in PCT_COLS:
                     return '0.00%'
                 return 'General'
-            df_chunk.to_excel(writer, sheet_name="SI Acord book", index=False, header=True, na_rep="#N/D")
-            ws  = writer.sheets["SI Acord book"]
+            df_chunk.to_excel(writer, sheet_name="Acuerdo book", index=False, header=True, na_rep="#N/D")
+            ws  = writer.sheets["Acuerdo book"]
             cols = list(df_chunk.columns)
             def _cl(name): return xl_col_to_name(cols.index(name))
             # extend cols with calculated columns before building the table
@@ -580,7 +584,7 @@ def calculo_fee_etl():
             df_extended['Compra PUC'] = pd.to_numeric(df_chunk.get('SI (€)\nAct'), errors='coerce') / (1 + pd.to_numeric(df_chunk.get('IVA'), errors='coerce').fillna(0))
             df_extended['Compra PVL'] = pd.to_numeric(df_chunk.get('PVL'), errors='coerce').fillna(0) * pd.to_numeric(df_chunk.get('SI (Ud)\nAct'), errors='coerce')
             ws.add_table(0, 0, n_rows_main, n_cols_main - 1, {
-                'name':    'SI_Acord_book',
+                'name':    'Acuerdo_book',
                 'style':   'Table Style Medium 1',
                 'columns': [{'header': c} for c in df_extended.columns],
             })
@@ -694,8 +698,9 @@ def calculo_fee_etl():
                                             f'=IF({sub}<{threshold},{minimo_val},{sub})',
                                             fmt_bold_eur)
                 _autofit(ws_bc, base_out, _col_fmt)
-            writer.sheets["Por Farmacia"].activate()
-            writer.sheets["SI Acord book"].hide()
+            writer.sheets["Por Farmacia"].active()
+            writer.sheets["Por Producto"].hide()
+            writer.sheets["Acuerdo book"].hide()
 
             # Owner from Zoho Vendors (matched by BotPlus == Id Lab)
             lab_ids = _df['Id Lab'].dropna().unique().tolist()
@@ -716,6 +721,7 @@ def calculo_fee_etl():
                 owner_email = 'meslava@ecoceutics.com'
 
             writer.close()
+            buf = _inject_pivot_sheets(buf)
             size_mb = len(buf.getvalue()) / 1024 / 1024
             print(f"Sending [{lab}{part_label}]: {len(df_chunk)} rows ({size_mb:.1f} MB)")
             html_body = f"""
@@ -752,7 +758,7 @@ Hygie31 España<br>
 
             # probe size with full df first
             probe = io.BytesIO()
-            df_lab.to_excel(probe, sheet_name="SI Acord book", index=False, header=True, engine='xlsxwriter', na_rep="#N/D")
+            df_lab.to_excel(probe, sheet_name="Acuerdo book", index=False, header=True, engine='xlsxwriter', na_rep="#N/D")
             if len(probe.getvalue()) <= MAX_BYTES:
                 _send_chunk(df_lab, lab, safe_name, "")
             else:
