@@ -14,6 +14,9 @@ TABLE_TRANSFERS = [
     ("dbo.teco_familias",      "SELECT * FROM dbo.teco_familias"),
     ("dbo.tbi_sinonimos",      "SELECT * FROM dbo.tbi_sinonimos"),
     ("dbo.v_dim_productos",    "SELECT * FROM dbo.v_dim_productos"),
+    ("dbo.v_dim_productos",    "SELECT * FROM dbo.dwRecpciones"),
+    ("dbo.v_dim_productos",    "SELECT * FROM dbo.dwVentas"),
+    ("dbo.v_dim_productos",    "SELECT * FROM dbo.tbi_productosWORKTMPALL"),
 ]
 
 dag = DAG(
