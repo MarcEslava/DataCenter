@@ -23,9 +23,11 @@ x-deploy-medium: &deploy-medium
 
 x-airflow-common: &airflow-common
   <<: *common
-  image: apache/airflow:3.0.1
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
   environment: &airflow-common-env
-    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-microsoft-mssql pymssql xlsxwriter"
+    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-microsoft-mssql pymssql xlsxwriter python-dateutil"
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:-this_is_a_very_secured_key_change_in_production}

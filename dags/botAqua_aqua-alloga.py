@@ -15,7 +15,7 @@ dag = DAG(
     'push_alloga_etl',
     default_args=default_args,
     description='EcoVital Orders ETL Pipeline',
-    schedule=Variable.get("push_alloga_schedule", default_var="30 11 * * 1-5"),
+    schedule=Variable.get("push_alloga_schedule", default_var="30 10 * * 1-5"),
     start_date=datetime(2026, 1, 1),
     catchup=False,
 )
