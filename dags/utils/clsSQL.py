@@ -177,11 +177,12 @@ class SQLConnection:
         url = self._build_url(host, port)
 
         # Sensible defaults per dialect/driver
+        extra_kwargs = {}
         if self.dialect == "mssql" and "pyodbc" in (self.driver or ""):
-            # accelerate bulk inserts/updates
-            self.connect_args.setdefault("fast_executemany", True)
+            # fast_executemany must be a create_engine kwarg, not connect_args
+            extra_kwargs["fast_executemany"] = True
 
-        self.engine = create_engine(url, pool_pre_ping=True, connect_args=self.connect_args)
+        self.engine = create_engine(url, pool_pre_ping=True, connect_args=self.connect_args, **extra_kwargs)
 
         # validate
         with self.engine.connect() as conn:

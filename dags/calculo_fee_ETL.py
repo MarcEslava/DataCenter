@@ -22,7 +22,7 @@ ZOHO_CONN_ID = "zoho_crm"
 @dag(
     dag_id="calculo_fee_ETL",
     description="Monthly BIFarma Eco SI/SO fee calculation ETL",
-    schedule=Variable.get("calculo_fee_schedule", default_var="0 6 1 * *"),
+    schedule=Variable.get("calculo_fee_schedule", default_var="0 6 6 * *"),
     start_date=datetime(2024, 1, 1),
     catchup=False,
     params={
