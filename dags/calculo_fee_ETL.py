@@ -547,163 +547,85 @@ def calculo_fee_etl():
 
         TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), 'templates', 'parafarmacia_template.xlsx')
 
-        
+        def _inject_pivot_sheets(df):
+            import zipfile, re
+            import xml.sax.saxutils as sax
+            from xlsxwriter.utility import xl_col_to_name as _col
+
+            NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+
+            def _clean_col(name):
+                return re.sub(r'[^\w\s()\-€%/.,;:\'\"#@!?ºª°]', '', str(name).replace('\n', '').replace('\r', '').replace('\t', ''))
+
+            _INVALID_XML = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
+
+            def _safe_str(v):
+                return _INVALID_XML.sub('', sax.escape(str(v)))
+
+            def _build_sheet_xml(frame):
+                import math
+                import pandas as pd
+                cols = list(frame.columns)
+                rows_xml = [
+                    f'<row r="1">{"".join(f"<c r=\"{_col(j)}1\" t=\"inlineStr\"><is><t>{sax.escape(_clean_col(c))}</t></is></c>" for j, c in enumerate(cols))}</row>'
+                ]
+                for i, row in enumerate(frame.itertuples(index=False), start=2):
+                    cells = []
+                    for j, val in enumerate(row):
+                        ref = f'{_col(j)}{i}'
+                        if val is None or val is pd.NA or (isinstance(val, float) and math.isnan(val)):
+                            cells.append(f'<c r="{ref}" t="inlineStr"><is><t></t></is></c>')
+                        elif isinstance(val, (int, float)):
+                            cells.append(f'<c r="{ref}"><v>{val}</v></c>')
+                        else:
+                            cells.append(f'<c r="{ref}" t="inlineStr"><is><t>{_safe_str(val)}</t></is></c>')
+                    rows_xml.append(f'<row r="{i}">{"".join(cells)}</row>')
+                return (
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                    f'<worksheet xmlns="{NS}"><sheetData>' + ''.join(rows_xml) + '</sheetData></worksheet>'
+                ).encode('utf-8')
+
+            out = io.BytesIO()
+            with zipfile.ZipFile(TEMPLATE_PATH, 'r') as zt, \
+                 zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zout:
+                for item in zt.namelist():
+                    data = zt.read(item)
+                    if item == 'xl/worksheets/sheet1.xml':
+                        data = _build_sheet_xml(df)
+                    elif item == 'xl/pivotCache/pivotCacheDefinition1.xml':
+                        s = data.decode('utf-8')
+                        if 'refreshOnLoad' not in s:
+                            s = re.sub(r'(<pivotCacheDefinition\b)', r'\1 refreshOnLoad="1"', s)
+                        data = s.encode('utf-8')
+                    zout.writestr(item, data)
+
+            out.seek(0)
+            return out
+
         def _send_chunk(df_chunk, lab, safe_name, part_label):
-            from xlsxwriter.utility import xl_col_to_name
-            buf = io.BytesIO()
-            writer = pd.ExcelWriter(buf, engine='xlsxwriter')
-            wb = writer.book
-            fmt_currency = wb.add_format({'num_format': '#,##0.00 "€"'})
-            fmt_pct      = wb.add_format({'num_format': '0.00%'})
-
-            CURRENCY_COLS = ('Importe Fee', 'Importe Información', 'Importe Marketing', 'Compra PUC', 'Compra PVL')
-            PCT_COLS      = ('Fee Fijo', 'Fee Información', 'Fee Marketing', 'Fee Variable')
-
-            def _col_fmt(col_name):
-                if '€' in col_name or col_name in CURRENCY_COLS or col_name.startswith('Base Calculo'):
-                    return fmt_currency
-                if '%' in col_name or col_name in PCT_COLS:
-                    return fmt_pct
-                return None
-
-            def _col_num_format(col_name):
-                if '€' in col_name or col_name in CURRENCY_COLS or col_name.startswith('Base Calculo'):
-                    return '#,##0.00 "€"'
-                if '%' in col_name or col_name in PCT_COLS:
-                    return '0.00%'
-                return 'General'
-            df_chunk.to_excel(writer, sheet_name="Acuerdo book", index=False, header=True, na_rep="#N/D")
-            ws  = writer.sheets["Acuerdo book"]
-            cols = list(df_chunk.columns)
-            def _cl(name): return xl_col_to_name(cols.index(name))
-            # extend cols with calculated columns before building the table
-            all_cols = cols + ['Compra PUC', 'Compra PVL']
-            n_rows_main = len(df_chunk)
-            n_cols_main = len(all_cols)
             df_extended = df_chunk.copy()
             df_extended['Compra PUC'] = pd.to_numeric(df_chunk.get('SI (€)\nAct'), errors='coerce') / (1 + pd.to_numeric(df_chunk.get('IVA'), errors='coerce').fillna(0))
             df_extended['Compra PVL'] = pd.to_numeric(df_chunk.get('PVL'), errors='coerce').fillna(0) * pd.to_numeric(df_chunk.get('SI (Ud)\nAct'), errors='coerce')
-            ws.add_table(0, 0, n_rows_main, n_cols_main - 1, {
-                'name':    'Acuerdo_book',
-                'style':   'Table Style Medium 1',
-                'columns': [{'header': c} for c in df_extended.columns],
-            })
-            # write Excel formulas for Compra PUC / PVL over the data rows
-            puc_idx = len(cols)
-            pvl_idx = len(cols) + 1
-            for i in range(n_rows_main):
-                r = i + 2  # Excel row (1=header)
-                ws.write_formula(i + 1, puc_idx, f'={_cl("SI (€)\nAct")}{r}/(1+{_cl("IVA")}{r})', _col_fmt('Compra PUC'))
-                ws.write_formula(i + 1, pvl_idx, f'={_cl("PVL")}{r}*{_cl("SI (Ud)\nAct")}{r}', _col_fmt('Compra PVL'))
-            _write_subtotals(ws, writer.book, df_extended, ['Nombre Oficina'], n_rows_main, _col_num_format)
-            _autofit(ws, df_extended, _col_fmt)
-            pf_n_rows, pf_cols = _write_summary_sheet(writer, df_chunk, ['Nombre Oficina', 'NIF', 'BOOK', 'Producto', 'MARCA', 'GAMA'], 'Por Farmacia', _col_fmt, _col_num_format)
-            _write_summary_sheet(writer, df_chunk, ['Codigo de Producto', 'Producto', 'MARCA', 'GAMA'], 'Por Producto', _col_fmt, _col_num_format)
 
-            # ── Base Fee sheet (quarterly: months 3, 6, 9, 12 only) ─────────────
-            if d.mes % 3 == 0:
-                _df = df_chunk.copy()
-                _df['Compra PUC'] = pd.to_numeric(_df['SI (€)\nAct'], errors='coerce') / (1 + pd.to_numeric(_df['IVA'], errors='coerce').fillna(0))
-                _df['Compra PVL'] = pd.to_numeric(_df['PVL'], errors='coerce').fillna(0) * pd.to_numeric(_df['SI (Ud)\nAct'], errors='coerce')
-                base_agg = _df.groupby(['Nombre Oficina', 'NIF'], dropna=False)[['Compra PUC', 'Compra PVL']].sum().reset_index()
-                acords_ref = s.df_vendors[['BotPlus', 'Base_Calculo_Bruta_Neta', 'Fee_Fijo1', 'Fee_Informaci_n1', 'Fee_Marketing', 'Fee_Fijo_Minimo', 'Fee_Marketing_Minimo', 'Incremento_1', 'Incremento_2', 'Incremento_3', 'Fee_Variable_11', 'Fee_Variable_21', 'Fee_Variable_31']].drop_duplicates('BotPlus').rename(columns={'BotPlus': 'BIF_id'})
-                lab_per_farm = _df[['Nombre Oficina', 'Id Lab']].drop_duplicates('Nombre Oficina')
-                base_agg = base_agg.merge(lab_per_farm, on='Nombre Oficina', how='left')
-                base_agg = base_agg.merge(acords_ref, left_on='Id Lab', right_on='BIF_id', how='left').drop(columns=['BIF_id'], errors='ignore')
-                num_ba = base_agg.select_dtypes(include='number').columns.tolist()
-                txt_ba = [c for c in base_agg.columns if c not in num_ba and c != 'NIF']
-                base_agg = base_agg.groupby('NIF').agg(
-                    {**{c: 'sum' for c in num_ba}, **{c: 'first' for c in txt_ba}}
-                ).reset_index()
-                base_agg['Calculo Bruto/Neto'] = base_agg['Base_Calculo_Bruta_Neta'].apply(
-                    lambda v: v if str(v).strip().upper() in ('BRUTA', 'NETA') else 'Bruta'
-                )
-                is_neta = base_agg['Base_Calculo_Bruta_Neta'].str.strip().str.upper().eq('NETA').any()
-                base_calc_col = 'Base Calculo Neto' if is_neta else 'Base Calculo Bruto'
-                base_agg[base_calc_col]        = base_agg.apply(
-                    lambda r: r['Compra PUC'] if is_neta else r['Compra PVL'],
-                    axis=1,
-                )
-                base_agg['Fee Fijo']            = pd.to_numeric(base_agg['Fee_Fijo1'], errors='coerce').fillna(0) / 100
-                base_agg['Importe Fee']         = float('nan')
-                base_agg['Fee Información']     = pd.to_numeric(base_agg['Fee_Informaci_n1'], errors='coerce').fillna(0) / 100
-                base_agg['Importe Información'] = float('nan')
-                non_group = ['Nombre Oficina', 'NIF', 'Calculo Bruto/Neto']
-                fee_cols = ['Fee Fijo', 'Importe Fee', 'Fee Información', 'Importe Información']
-                if d.mes % 6 == 0:
-                    base_agg['Fee Marketing']     = pd.to_numeric(base_agg['Fee_Marketing'], errors='coerce').fillna(0) / 100
-                    base_agg['Importe Marketing'] = float('nan')
-                    fee_cols += ['Fee Marketing', 'Importe Marketing']
-                # Fee Variable — bracket thresholds and rates are lab-level scalars
-                i1  = pd.to_numeric(base_agg['Incremento_1'],   errors='coerce').fillna(0).iloc[0] / 100
-                i2  = pd.to_numeric(base_agg['Incremento_2'],   errors='coerce').fillna(0).iloc[0] / 100
-                i3  = pd.to_numeric(base_agg['Incremento_3'],   errors='coerce').fillna(0).iloc[0] / 100
-                fv1 = pd.to_numeric(base_agg['Fee_Variable_11'], errors='coerce').fillna(0).iloc[0] / 100
-                fv2 = pd.to_numeric(base_agg['Fee_Variable_21'], errors='coerce').fillna(0).iloc[0] / 100
-                fv3 = pd.to_numeric(base_agg['Fee_Variable_31'], errors='coerce').fillna(0).iloc[0] / 100
-                base_agg['Fee Variable']     = float('nan')
-                base_agg['Importe Variable'] = float('nan')
-                base_out = base_agg[['Nombre Oficina', 'NIF', base_calc_col] + fee_cols +
-                                     ['Fee Variable', 'Importe Variable']]
-                base_out.to_excel(writer, sheet_name='Base Fee', index=False, na_rep='#N/D')
-                ws_bc = writer.sheets['Base Fee']
-                n_r, n_c = base_out.shape
-                ws_bc.add_table(0, 0, n_r, n_c - 1, {
-                    'name':    'Base_Fee',
-                    'style':   'Table Style Medium 2',
-                    'columns': [{'header': c} for c in base_out.columns],
-                })
-                bc_cols = list(base_out.columns)
-                bc_l    = xl_col_to_name(bc_cols.index(base_calc_col))
-                all_importe_pairs = [('Importe Fee', 'Fee Fijo'), ('Importe Información', 'Fee Información'), ('Importe Marketing', 'Fee Marketing')]
-                fmt_eur = writer.book.add_format({'num_format': '#,##0.00 "€"'})
-                for imp_col, fee_col in all_importe_pairs:
-                    if imp_col not in bc_cols:
-                        continue
-                    imp_i = bc_cols.index(imp_col)
-                    fee_l = xl_col_to_name(bc_cols.index(fee_col))
-                    for i in range(n_r):
-                        r = i + 2
-                        ws_bc.write_formula(i + 1, imp_i, f'={bc_l}{r}*{fee_l}{r}', fmt_eur)
-                # Fee Variable: growth from Por Farmacia TOTALES row (lab-level, same for every row)
-                fmt_pct  = writer.book.add_format({'num_format': '0.00%'})
-                pf_tot_r = pf_n_rows + 2  # Excel 1-indexed TOTALES row in Por Farmacia
-                act_ref  = f"'Por Farmacia'!{xl_col_to_name(pf_cols.index('SO (€)\nAct'))}{pf_tot_r}"
-                ant_ref  = f"'Por Farmacia'!{xl_col_to_name(pf_cols.index('SO (€)\nAnt'))}{pf_tot_r}"
-                growth   = f'({act_ref}-{ant_ref})/{ant_ref}'
-                bracket  = (
-                    f'IF(AND({ant_ref}>0,{growth}>={i3}),{fv3},'
-                    f'IF(AND({ant_ref}>0,{growth}>={i2}),{fv2},'
-                    f'IF(AND({ant_ref}>0,{growth}>={i1}),{fv1},0)))'
-                )
-                fv_i    = bc_cols.index('Fee Variable')
-                imp_v_i = bc_cols.index('Importe Variable')
-                for i in range(n_r):
-                    r = i + 2
-                    ws_bc.write_formula(i + 1, fv_i,    f'={bracket}',                              fmt_pct)
-                    ws_bc.write_formula(i + 1, imp_v_i, f'={bc_l}{r}*{xl_col_to_name(fv_i)}{r}',   fmt_eur)
-                _write_subtotals(ws_bc, writer.book, base_out, non_group, n_r, _col_num_format)
-                # overwrite Importe totals with minimum-aware formula
-                fmt_bold_eur = writer.book.add_format({'num_format': '#,##0.00 "€"', 'bold': True})
-                total_row_idx = n_r + 1
-                for imp_col, minimo_field in [('Importe Fee', 'Fee_Fijo_Minimo'), ('Importe Marketing', 'Fee_Marketing_Minimo')]:
-                    if imp_col not in bc_cols:
-                        continue
-                    minimo_val = pd.to_numeric(base_agg[minimo_field], errors='coerce').fillna(0).iloc[0]
-                    if minimo_val > 0:
-                        threshold   = minimo_val / d.mes
-                        imp_l = xl_col_to_name(bc_cols.index(imp_col))
-                        sub   = f'SUBTOTAL(109,{imp_l}2:{imp_l}{n_r + 1})'
-                        ws_bc.write_formula(total_row_idx, bc_cols.index(imp_col),
-                                            f'=IF({sub}<{threshold},{minimo_val},{sub})',
-                                            fmt_bold_eur)
-                _autofit(ws_bc, base_out, _col_fmt)
-            writer.sheets["Por Farmacia"].active()
-            writer.sheets["Por Producto"].hide()
-            writer.sheets["Acuerdo book"].hide()
+            df_extended.rename(columns={'Stockactual': 'Stock'}, inplace=True)
+
+            # Reorder columns to match template: group SO/SI by metric then Act/Ant
+            _COL_ORDER = [
+                'SO (Ud)\nAct', 'SO (Ud)\nAnt',
+                'SO (€)\nAct',  'SO (€)\nAnt',
+                'SI (Ud)\nAct', 'SI (Ud)\nAnt',
+                'SI (€)\nAct',  'SI (€)\nAnt',
+            ]
+            existing = list(df_extended.columns)
+            pivot_cols = [c for c in _COL_ORDER if c in existing]
+            # find insertion point: position of first SO/SI col in original order
+            insert_at = next((i for i, c in enumerate(existing) if c in pivot_cols), len(existing))
+            before = [c for c in existing[:insert_at] if c not in pivot_cols]
+            after  = [c for c in existing[insert_at:] if c not in pivot_cols]
+            df_extended = df_extended[before + pivot_cols + after]
 
             # Owner from Zoho Vendors (matched by BotPlus == Id Lab)
-            lab_ids = _df['Id Lab'].dropna().unique().tolist()
+            lab_ids = df_chunk['Id Lab'].dropna().unique().tolist()
             vendor_row = s.df_vendors[s.df_vendors['BotPlus'].isin(lab_ids)]
             if vendor_row.empty:
                 print(f"[{lab}] No vendor match — lab_ids: {lab_ids[:5]}, BotPlus sample: {s.df_vendors['BotPlus'].dropna().unique()[:5].tolist()}")
@@ -720,9 +642,83 @@ def calculo_fee_etl():
             if not owner_email:
                 owner_email = 'meslava@ecoceutics.com'
 
-            writer.close()
-            buf = _inject_pivot_sheets(buf)
+            # ── Base Fee (quarterly only) ────────────────────────────────────
+            df_base_fee = None
+            if d.mes % 3 == 0:
+                _df = df_chunk.copy()
+                _df['Compra PUC'] = pd.to_numeric(_df['SI (€)\nAct'], errors='coerce') / (1 + pd.to_numeric(_df['IVA'], errors='coerce').fillna(0))
+                _df['Compra PVL'] = pd.to_numeric(_df['PVL'], errors='coerce').fillna(0) * pd.to_numeric(_df['SI (Ud)\nAct'], errors='coerce')
+                base_agg = _df.groupby(['Nombre Oficina', 'NIF'], dropna=False)[['Compra PUC', 'Compra PVL']].sum().reset_index()
+                acords_ref = s.df_vendors[['BotPlus', 'Base_Calculo_Bruta_Neta', 'Fee_Fijo1', 'Fee_Informaci_n1', 'Fee_Marketing', 'Fee_Fijo_Minimo', 'Fee_Marketing_Minimo', 'Incremento_1', 'Incremento_2', 'Incremento_3', 'Fee_Variable_11', 'Fee_Variable_21', 'Fee_Variable_31']].drop_duplicates('BotPlus').rename(columns={'BotPlus': 'BIF_id'})
+                lab_per_farm = _df[['Nombre Oficina', 'Id Lab']].drop_duplicates('Nombre Oficina')
+                base_agg = base_agg.merge(lab_per_farm, on='Nombre Oficina', how='left')
+                base_agg = base_agg.merge(acords_ref, left_on='Id Lab', right_on='BIF_id', how='left').drop(columns=['BIF_id'], errors='ignore')
+                num_ba = base_agg.select_dtypes(include='number').columns.tolist()
+                txt_ba = [c for c in base_agg.columns if c not in num_ba and c != 'NIF']
+                base_agg = base_agg.groupby('NIF').agg({**{c: 'sum' for c in num_ba}, **{c: 'first' for c in txt_ba}}).reset_index()
+                is_neta = base_agg['Base_Calculo_Bruta_Neta'].str.strip().str.upper().eq('NETA').any()
+                base_agg['Base calculo.'] = base_agg.apply(lambda r: r['Compra PUC'] if is_neta else r['Compra PVL'], axis=1)
+                base_agg['Fee Fijo']            = pd.to_numeric(base_agg['Fee_Fijo1'], errors='coerce').fillna(0) / 100
+                base_agg['Importe Fee']         = base_agg['Base calculo.'] * base_agg['Fee Fijo']
+                base_agg['Fee Información']     = pd.to_numeric(base_agg['Fee_Informaci_n1'], errors='coerce').fillna(0) / 100
+                base_agg['Importe Información'] = base_agg['Base calculo.'] * base_agg['Fee Información']
+                fee_cols = ['Fee Fijo', 'Importe Fee', 'Fee Información', 'Importe Información']
+                if d.mes % 6 == 0:
+                    base_agg['Fee Marketing']     = pd.to_numeric(base_agg['Fee_Marketing'], errors='coerce').fillna(0) / 100
+                    base_agg['Importe Marketing'] = base_agg['Base calculo.'] * base_agg['Fee Marketing']
+                    fee_cols += ['Fee Marketing', 'Importe Marketing']
+                i1  = pd.to_numeric(base_agg['Incremento_1'],    errors='coerce').fillna(0).iloc[0] / 100
+                i2  = pd.to_numeric(base_agg['Incremento_2'],    errors='coerce').fillna(0).iloc[0] / 100
+                i3  = pd.to_numeric(base_agg['Incremento_3'],    errors='coerce').fillna(0).iloc[0] / 100
+                fv1 = pd.to_numeric(base_agg['Fee_Variable_11'], errors='coerce').fillna(0).iloc[0] / 100
+                fv2 = pd.to_numeric(base_agg['Fee_Variable_21'], errors='coerce').fillna(0).iloc[0] / 100
+                fv3 = pd.to_numeric(base_agg['Fee_Variable_31'], errors='coerce').fillna(0).iloc[0] / 100
+                so_act = _df['SO (€)\nAct'].sum()
+                so_ant = _df['SO (€)\nAnt'].sum()
+                growth = (so_act - so_ant) / so_ant if so_ant else 0
+                fee_var = fv3 if growth >= i3 else fv2 if growth >= i2 else fv1 if growth >= i1 else 0
+                base_agg['Fee Variable']     = fee_var
+                base_agg['Importe Variable'] = base_agg['Base calculo.'] * fee_var
+                df_base_fee = base_agg[['Nombre Oficina', 'NIF', 'Base calculo.'] + fee_cols + ['Fee Variable', 'Importe Variable']]
+
+            buf = _inject_pivot_sheets(df_extended)
             size_mb = len(buf.getvalue()) / 1024 / 1024
+
+            # ── Second Excel: Por Farmacia + Base Fee ────────────────────────
+            attachments = [{"content": buf.getvalue(), "name": f"Parafarmacia {fin_month}.{curr_yy}{' ' + period if period else ''} - {safe_name}{part_label}.xlsx", "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}]
+
+            buf2 = io.BytesIO()
+            writer2 = pd.ExcelWriter(buf2, engine='xlsxwriter')
+            wb2 = writer2.book
+            fmt_currency = wb2.add_format({'num_format': '#,##0.00 "€"'})
+            fmt_pct      = wb2.add_format({'num_format': '0.00%'})
+            CURRENCY_COLS = ('Importe Fee', 'Importe Información', 'Importe Marketing', 'Compra PUC', 'Compra PVL', 'Base calculo.', 'Importe Variable')
+            PCT_COLS      = ('Fee Fijo', 'Fee Información', 'Fee Marketing', 'Fee Variable')
+            def _col_fmt(col_name):
+                if '€' in col_name or col_name in CURRENCY_COLS or col_name.startswith('Base Calculo'):
+                    return fmt_currency
+                if '%' in col_name or col_name in PCT_COLS:
+                    return fmt_pct
+                return None
+            def _col_num_format(col_name):
+                if '€' in col_name or col_name in CURRENCY_COLS or col_name.startswith('Base Calculo'):
+                    return '#,##0.00 "€"'
+                if '%' in col_name or col_name in PCT_COLS:
+                    return '0.00%'
+                return 'General'
+            _write_summary_sheet(writer2, df_chunk, ['Nombre Oficina', 'NIF', 'BOOK', 'Producto', 'MARCA', 'GAMA'], 'Por Farmacia', _col_fmt, _col_num_format)
+            if df_base_fee is not None:
+                df_base_fee.to_excel(writer2, sheet_name='Base Fee', index=False, na_rep='')
+                ws_bf = writer2.sheets['Base Fee']
+                n_r, n_c = df_base_fee.shape
+                ws_bf.add_table(0, 0, n_r, n_c - 1, {'name': 'Base_Fee', 'style': 'Table Style Medium 2', 'columns': [{'header': c} for c in df_base_fee.columns]})
+                for ci, col_name in enumerate(df_base_fee.columns):
+                    fmt = _col_fmt(col_name)
+                    if fmt:
+                        ws_bf.set_column(ci, ci, None, fmt)
+            writer2.close()
+            attachments.append({"content": buf2.getvalue(), "name": f"Fee {fin_month}.{curr_yy}{' ' + period if period else ''} - {safe_name}{part_label}.xlsx", "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"})
+
             print(f"Sending [{lab}{part_label}]: {len(df_chunk)} rows ({size_mb:.1f} MB)")
             html_body = f"""
 <p>Estimado/a <b>{lab}</b>,</p>
@@ -747,7 +743,7 @@ Hygie31 España<br>
                 to=[{"address": "meslava@ecoceutics.com", "name": owner_name}],
                 subject=subject,
                 html_body=html_body,
-                attachments=[{"content": buf.getvalue(), "name": f"Parafarmacia {fin_month}.{curr_yy}{' ' + period if period else ''} - {safe_name}{part_label}.xlsx", "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}],
+                attachments=attachments,
             )
 
         mailer = ZohoMailer()
@@ -756,10 +752,8 @@ Hygie31 España<br>
             df_lab = s.df_bifarma_final[s.df_bifarma_final['Laboratorio Categorizado'] == lab]
             safe_name = lab.replace("/", "-").replace("\\", "-")
 
-            # probe size with full df first
-            probe = io.BytesIO()
-            df_lab.to_excel(probe, sheet_name="Acuerdo book", index=False, header=True, engine='xlsxwriter', na_rep="#N/D")
-            if len(probe.getvalue()) <= MAX_BYTES:
+            # estimate size: ~150 bytes/row based on observed ~0.6 MB per 5000 rows
+            if len(df_lab) * 150 <= MAX_BYTES:
                 _send_chunk(df_lab, lab, safe_name, "")
             else:
                 chunk_size = 5000
