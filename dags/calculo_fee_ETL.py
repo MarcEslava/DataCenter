@@ -721,7 +721,7 @@ def calculo_fee_etl():
 
             print(f"Sending [{lab}{part_label}]: {len(df_chunk)} rows ({size_mb:.1f} MB)")
             html_body = f"""
-<p>Estimado/a <b>{lab}</b>,</p>
+<p>Estimado/a,</p>
 
 <p>Nos ponemos en contacto con usted para hacerle llegar la factura correspondiente a los servicios prestados.</p>
 
@@ -740,7 +740,7 @@ Hygie31 España<br>
 """
             subject = f"[TEST PARA CATEGORY][Calculo Fee] {lab}{part_label} — {rappel} {period or 'mensual'}"
             mailer.send(
-                to=[{"address": "meslava@ecoceutics.com", "name": owner_name}],
+                to=[{"address": owner_email, "name": owner_name}],
                 subject=subject,
                 html_body=html_body,
                 attachments=attachments,
