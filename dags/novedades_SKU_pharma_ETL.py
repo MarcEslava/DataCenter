@@ -59,7 +59,7 @@ def _query_sql(conn_id: str, sql: str, dialect: str):
     schedule= Variable.get("novedades_sku_pharma_schedule", default_var="0 2 1 * *"),  # default: 2am on 1st of each month
     start_date=datetime(2024, 1, 1),
     catchup=False,
-    max_active_tasks=1,  # limit parallelism to avoid overloading sources
+    max_active_tasks=4,  # limit parallelism to avoid overloading sources
     default_args={
         'owner': 'data-team',
         'retries': 0,
@@ -284,8 +284,16 @@ def novedades_sku_pharma_etl():
                     WHERE T1.anyomes >= {prev_yy}01 AND T1.anyomes <= {prev_yy}{fin_month}
                         AND {ECO_FILTER} AND {LAB_FILTER} {GROUP_BY}""")
 
+            for df_ in (act_df, ant_df):
+                df_['CodProducto'] = pd.to_numeric(df_['CodProducto'], errors='coerce').astype('Int64')
+
             MERGE_KEYS = ['CodProducto', 'IdLaboratorio', 'IdEntidad', 'IdDelegacion', 'IdProducto']
             products_df = pd.merge(act_df, ant_df, on=MERGE_KEYS, how='left')
+            # Drop _y duplicates — Producto/Laboratorio are identical in both sides
+            for col in ['Producto', 'Laboratorio']:
+                if f'{col}_x' in products_df.columns:
+                    products_df.rename(columns={f'{col}_x': col}, inplace=True)
+                    products_df.drop(columns=[f'{col}_y'], errors='ignore', inplace=True)
             for col in ['CantidadAnt', 'ImporteAnt', 'CantidadCompraAnt', 'ImporteCompraAnt']:
                 products_df[col] = products_df.get(col, pd.Series(dtype=float)).fillna(0.0)
             print(f"[{Vendor_Name}] {len(products_df)} products for BIF_ids {bif_ids}")
@@ -313,9 +321,9 @@ def novedades_sku_pharma_etl():
                 print(f"[{Vendor_Name}] No client products — skipping.")
                 return {"Vendor_Name": Vendor_Name, "vendor_id": filtered_products.get("vendor_id", ""), "new_products": [], "mapped": filtered_products["mapped"]}
 
-            client_prods_df['CodProducto'] = pd.to_numeric(client_prods_df['CodProducto'], errors='coerce').round(0)
-            crm_prods_df['Product_Code'] = pd.to_numeric(crm_prods_df['Product_Code'], errors='coerce').round(0)
-            crm_prods_df['EAN'] = pd.to_numeric(crm_prods_df['EAN']).fillna(0).round(0) 
+            client_prods_df['CodProducto'] = pd.to_numeric(client_prods_df['CodProducto'], errors='coerce').astype('Int64')
+            crm_prods_df['Product_Code']   = pd.to_numeric(crm_prods_df['Product_Code'],   errors='coerce').astype('Int64')
+            crm_prods_df['EAN']            = pd.to_numeric(crm_prods_df['EAN'],             errors='coerce').astype('Int64')
             
             matched_by_code = set(pd.merge(client_prods_df, crm_prods_df, left_on='CodProducto', right_on='Product_Code', how='inner')['CodProducto'])
             matched_by_ean  = set(pd.merge(client_prods_df, crm_prods_df, left_on='CodProducto', right_on='EAN',          how='inner')['CodProducto'])
@@ -325,7 +333,6 @@ def novedades_sku_pharma_etl():
             ean_lookup   = crm_prods_df[['Product_Code', 'EAN']].rename(columns={'Product_Code': 'CodProducto'})
             new_prods_df = pd.merge(new_prods_df, ean_lookup, on='CodProducto', how='left')
             new_prods_df = new_prods_df.drop_duplicates(subset=['CodProducto'])
-            new_prods_df = new_prods_df.rename(columns={'Producto_x':'Producto', 'Laboratorio_x':'Laboratorio'})
             print(f"[{Vendor_Name}] Found {len(new_prods_df)} new products not in CRM")
             return {
                 "Vendor_Name": Vendor_Name,
@@ -337,10 +344,9 @@ def novedades_sku_pharma_etl():
             }
 
         @task
-        def notify_categories(result: dict, all_contacts: list[dict]) -> None:
+        def notify_categories(result: dict, all_contacts: list[dict]) -> dict:
             """Send a notification email for this vendor's new products."""
             from utils.clsZohoMailing import ZohoMailer
-            from utils.clsDate import DateHelper
 
             Vendor_Name = result.get("Vendor_Name", "Unknown")
             vendor_id   = result.get("vendor_id", "")
@@ -355,58 +361,45 @@ def novedades_sku_pharma_etl():
                     first_name = contact.get("First_Name", "")
             print(f"[{Vendor_Name}] Contact First_Name: '{first_name}'")
 
+            new_prods = [row for row in new_prods if float(row.get('ImporteCompraAct') or 0) > 0]
 
             if not new_prods:
                 print(f"[{Vendor_Name}] No new products — skipping notification.")
-                return
+                return {"Vendor_Name": Vendor_Name, "new_products": []}
 
             import csv, io
             buf = io.StringIO()
             writer = csv.DictWriter(buf, fieldnames=[
-                'CodProducto', 'EAN', 'Producto', 'Producto_y', 'Laboratorio', 'Laboratorio_y', 'Marca', 'GAMMA',
+                'CodProducto', 'EAN', 'Producto', 'Laboratorio', 'GAMMA',
                 'PVL', 'IVA', 'Dto. Book 1', 'Dto. Book 2', 'Dto. Book 3',
                 'Unid. BOOK 1', 'Unid. BOOK 2', 'Unid. BOOK 3',
                 'Pack', 'Novedad', 'Opcional', 'Estado', 'Precio Unitario Compra', 'ImporteCompraAct', 'CantidadCompraAct'
             ], extrasaction='ignore', restval='', delimiter=';')
             writer.writeheader()
             DEFAULTS = {
-                'Estado': 'Inactivo',
-                'Novedad': 'Si',
-                'Opcional': 'Si',
-                'Dto. Book 1':0, 
-                'Dto. Book 2':0, 
-                'Dto. Book 3':0,
-                'Unid. BOOK 1':0, 
-                'Unid. BOOK 2':0, 
-                'Unid. BOOK 3':0 
+                'Estado': 'Inactivo', 'Novedad': 'Si', 'Opcional': 'Si',
+                'Dto. Book 1': 0, 'Dto. Book 2': 0, 'Dto. Book 3': 0,
+                'Unid. BOOK 1': 0, 'Unid. BOOK 2': 0, 'Unid. BOOK 3': 0,
             }
-
             for row in new_prods:
                 for field, default in DEFAULTS.items():
                     row.setdefault(field, default)
-
-            for row in new_prods:
                 try:
                     row['Precio Unitario Compra'] = round(float(row['ImporteCompraAct']) / float(row['CantidadCompraAct']), 2)
                 except (ZeroDivisionError, TypeError, ValueError):
                     row['Precio Unitario Compra'] = ''
                 writer.writerow(row)
-                
-            for row in new_prods:
-                row['Producto'] = row.pop('Producto_x', '')
-                row['Laboratorio'] = row.pop('Laboratorio_x', '')
-                writer.writerow(row)
 
             csv_content = buf.getvalue()
-            
-            d =DateHelper()
-            
-            greeting = f"<p>Hola {first_name},</p>" if first_name else ""
+
+            greeting = f"<p>Hola {first_name}.</p>" if first_name else ""
             html_body = (
                 f"{greeting}"
-                f"<p>El proceso <b>Novedades SKU</b> ha encontrado <b>{len(new_prods)}</b> productos nuevos para <b>{Vendor_Name}</b>.</p>"
+                f"<p>El proceso Novedades SKU ha encontrado {len(new_prods)} productos nuevos para {Vendor_Name}.</p>"
                 f"<p>Se adjunta el listado en formato CSV.</p>"
-                f"<p>PUC calculado en base a YTD actual -> {d.anyomes}</p>"
+                f"<p>Por favor tu ayuda para rellenar los datos de PVL, Iva, Marca, Gamma.</p>"
+                f"<p>Lo necesitamos con urgencia, para actualizar los datos de SO y SI correctamente.</p>"
+                f"<p>Saludos.</p>"
             )
             subject = f"[Novedades SKU] {Vendor_Name} — {len(new_prods)} producto(s) nuevo(s)"
             mailer = ZohoMailer()
@@ -417,38 +410,49 @@ def novedades_sku_pharma_etl():
                 attachments=[{"content": csv_content, "name": f"novedades_{Vendor_Name}.csv", "mime_type": "text/csv"}],
             )
             print(f"[{Vendor_Name}] Notification sent ({len(new_prods)} new products)")
+            return {"Vendor_Name": Vendor_Name, "new_products": new_prods}
 
         # Wire the per-client pipeline
         mapped            = map_acords(client_data, all_acords)
         filtered_products = filter_products(mapped)
         result            = new_products(all_crm_products, filtered_products)
-        notify_categories(result, all_contacts)
+        return notify_categories(result, all_contacts)
 
     @task(trigger_rule="all_done")
-    def notify_summary(**context):
-        """Send one summary email with new product counts per vendor."""
+    def notify_summary(results: list[dict]) -> None:
+        """Send summary email with SI/SO CSV for all labs after all clients are processed."""
+        import csv, io
         from utils.clsZohoMailing import ZohoMailer
 
-        ti          = context["ti"]
-        all_results = ti.xcom_pull(task_ids="process_client.new_products") or []
-        if not isinstance(all_results, list):
-            all_results = [all_results] if all_results else []
+        if not isinstance(results, list):
+            results = [results] if results else []
 
-        rows = []
-        for value in all_results:
+        all_rows = []
+        for value in results:
             if not isinstance(value, dict):
                 continue
             vendor = value.get("Vendor_Name", "Unknown")
-            count  = len(value.get("new_products", []))
-            rows.append((vendor, count))
+            for prod in value.get("new_products", []):
+                prod["Laboratorio"] = prod.get("Laboratorio") or vendor
+                all_rows.append(prod)
 
-        if not rows:
-            print("No XCom results found — skipping summary email.")
-            return
+        total = len(all_rows)
+        print(f"notify_summary: {total} total new products across all vendors")
 
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=[
+            'Laboratorio', 'CodProducto', 'EAN', 'Producto',
+            'CantidadAct', 'ImporteAct', 'CantidadAnt', 'ImporteAnt',
+            'CantidadCompraAct', 'ImporteCompraAct', 'CantidadCompraAnt', 'ImporteCompraAnt',
+        ], extrasaction='ignore', restval='', delimiter=';')
+        writer.writeheader()
+        writer.writerows(all_rows)
+        csv_content = buf.getvalue()
+
+        vendors_with_prods = [v.get("Vendor_Name", "?") for v in results if isinstance(v, dict) and v.get("new_products")]
         table_rows = "".join(
-            f"<tr><td>{vendor}</td><td style='text-align:center'>{count if count > 0 else '—'}</td></tr>"
-            for vendor, count in rows
+            f"<tr><td>{v.get('Vendor_Name','?')}</td><td style='text-align:center'>{len(v.get('new_products', [])) or '—'}</td></tr>"
+            for v in results if isinstance(v, dict)
         )
         html_body = (
             f"<p>Resumen del proceso <b>Novedades SKU</b>:</p>"
@@ -456,23 +460,25 @@ def novedades_sku_pharma_etl():
             f"<tr><th>Proveedor</th><th>Nuevos productos</th></tr>"
             f"{table_rows}"
             f"</table>"
+            f"<p>Se adjunta CSV con detalle SI/SO de todos los productos nuevos.</p>"
         )
-        total = sum(c for _, c in rows)
-        subject = f"[Novedades SKU] Resumen — {total} producto(s) nuevo(s) en {len(rows)} proveedor(es)"
+        subject = f"[Novedades SKU] Resumen — {total} producto(s) nuevo(s) en {len(vendors_with_prods)} proveedor(es)"
+        attachments = [{"content": csv_content, "name": "novedades_summary_SISO.csv", "mime_type": "text/csv"}] if all_rows else []
         ZohoMailer().send(
             to=[{"address": "meslava@ecoceutics.com", "name": "Marc Eslava"}],
             subject=subject,
             html_body=html_body,
+            attachments=attachments,
         )
-        print(f"Summary sent: {len(rows)} vendors, {total} new products total")
+        print(f"Summary sent: {len(results)} vendors processed, {total} new products total")
 
     # ── Wire it all together ──────────────────────────────────
     clients      = extract_vendors()
     crm_products = extract_crm_products()
     contacts     = extract_vendor_contacts()
     acords       = extract_acords()
-    process_client.partial(all_acords=acords, all_crm_products=crm_products, all_contacts=contacts).expand(client_data=clients)
-    notify_summary()
+    all_summaries = process_client.partial(all_acords=acords, all_crm_products=crm_products, all_contacts=contacts).expand(client_data=clients)
+    notify_summary(all_summaries)
 
 # Instantiate the DAG
 novedades_sku_pharma_etl()

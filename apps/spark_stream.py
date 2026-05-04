@@ -68,5 +68,5 @@ def main():
     )
     query.awaitTermination()
 
-
 main()
+

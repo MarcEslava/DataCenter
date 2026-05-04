@@ -7,16 +7,16 @@ SRC_CONN_ID = "BIFarmaCentral_db"
 DST_CONN_ID = "powerbi_dest_db"
 
 TABLE_TRANSFERS = [
-    ("dbo.tme_superfamilias",  "SELECT * FROM dbo.tme_superfamilias"),
-    ("dbo.v_tme_productos",    "SELECT * FROM dbo.v_tme_productos"),
-    ("dbo.tme_LaboratoriosE",  "SELECT * FROM dbo.tme_LaboratoriosE"),
-    ("dbo.tme_delegaciones",   "SELECT * FROM dbo.tme_delegaciones"),
-    ("dbo.teco_familias",      "SELECT * FROM dbo.teco_familias"),
-    ("dbo.tbi_sinonimos",      "SELECT * FROM dbo.tbi_sinonimos"),
-    ("dbo.v_dim_productos",    "SELECT * FROM dbo.v_dim_productos"),
-    ("dbo.v_dim_productos",    "SELECT * FROM dbo.dwRecpciones"),
-    ("dbo.v_dim_productos",    "SELECT * FROM dbo.dwVentas"),
-    ("dbo.v_dim_productos",    "SELECT * FROM dbo.tbi_productosWORKTMPALL"),
+    ("dbo.tme_superfamilias",           "SELECT * FROM dbo.tme_superfamilias"),
+    ("dbo.v_tme_productos",             "SELECT * FROM dbo.v_tme_productos"),
+    ("dbo.tme_LaboratoriosE",           "SELECT * FROM dbo.tme_LaboratoriosE"),
+    ("dbo.tme_delegaciones",            "SELECT * FROM dbo.tme_delegaciones"),
+    ("dbo.teco_familias",               "SELECT * FROM dbo.teco_familias"),
+    ("dbo.tbi_sinonimos",               "SELECT * FROM dbo.tbi_sinonimos"),
+    ("dbo.v_dim_productos",             "SELECT * FROM dbo.v_dim_productos"),
+    ("dbo.dwRecepciones",               "SELECT * FROM dbo.dwRecepciones"), #check
+    ("dbo.dwVentas",                    "SELECT * FROM dbo.dwVentas"),
+    ("dbo.tbi_productosWORKTMPALL",     "SELECT * FROM dbo.tbi_productosWORKTMPALL"),
 ]
 
 dag = DAG(
@@ -75,3 +75,4 @@ def _transfer_all(**_):
 
 
 PythonOperator(task_id="transfer_all_tables", python_callable=_transfer_all, dag=dag)
+
