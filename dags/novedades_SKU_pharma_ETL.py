@@ -220,6 +220,7 @@ def novedades_sku_pharma_etl():
                 "vendor_id": vendor_id,
                 "cm_email": cm_email,
                 "cm_name": cm_name,
+                "NIF": first_vendor.get("NIF", ""),
                 "laboratory_id": bif_ids,
                 "mapped": all_matched.to_dict('records'),
             }
@@ -237,7 +238,7 @@ def novedades_sku_pharma_etl():
 
             if not bif_ids:
                 print(f"[{Vendor_Name}] No BIF_ids — skipping product query")
-                return {"Vendor_Name": Vendor_Name, "vendor_id": mapped_result.get("vendor_id", ""), "cm_email": mapped_result.get("cm_email", ""), "cm_name": mapped_result.get("cm_name", ""), "products": [], "mapped": mapped_result.get("mapped", [])}
+                return {"Vendor_Name": Vendor_Name, "vendor_id": mapped_result.get("vendor_id", ""), "cm_email": mapped_result.get("cm_email", ""), "cm_name": mapped_result.get("cm_name", ""), "NIF": mapped_result.get("NIF", ""), "products": [], "mapped": mapped_result.get("mapped", [])}
 
             ids_str = ", ".join(f"'{x.strip()}'" for x in bif_ids)
             d = DateHelper()
@@ -250,7 +251,7 @@ def novedades_sku_pharma_etl():
             GROUP_BY = """GROUP BY pr.codproducto, pr.desproducto, pr.codlab, pr.deslab,
                 de.identidad, de.iddelegacion, de.delegacion, pr.idproducto,
                 f.nombresubgrupoproducto, pr.idsuperfamilia, f.nombresuperfamiliaeco,
-                pr.idfamilia, f.nombrefamiliaeco"""
+                pr.idfamilia, f.nombrefamiliaeco, pr.Marca"""
             BASE_FROM = """FROM dbo.bench_dwComprasVentasMesS T1
                 INNER JOIN dbo.tme_delegaciones de ON T1.idendeS = de.idendeS
                 INNER JOIN dbo.tbi_productosERS pr ON T1.idendeS = pr.idendeS AND T1.idproducto = pr.idproducto
@@ -258,7 +259,7 @@ def novedades_sku_pharma_etl():
             BASE_COLS = """pr.codproducto AS CodProducto, pr.desproducto AS Producto,
                 pr.codlab AS IdLaboratorio, pr.deslab AS Laboratorio,
                 de.identidad AS IdEntidad, de.iddelegacion AS IdDelegacion,
-                pr.idproducto AS IdProducto"""
+                pr.idproducto AS IdProducto, pr.Marca AS Marca"""
             ECO_FILTER = "(T1.idendes IN (SELECT idendes FROM tme_delegaciones WHERE grupoCompras = 'ECO'))"
             LAB_FILTER = f"pr.codLab IN ({ids_str})"
 
@@ -302,56 +303,55 @@ def novedades_sku_pharma_etl():
                 "vendor_id": mapped_result.get("vendor_id", ""),
                 "cm_email": mapped_result.get("cm_email", ""),
                 "cm_name": mapped_result.get("cm_name", ""),
+                "NIF": mapped_result.get("NIF", ""),
                 "products": products_df.to_dict('records'),
                 "mapped": mapped_result["mapped"],
             }
 
         @task
         def new_products(all_crm_products : dict, filtered_products: dict) -> dict:
-            """Compare the client's products against CRM and keep only new ones."""
+            """All Zoho CRM products enriched with SQL sales data (CRM is the base)."""
             import pandas as pd
-            pd.set_option('display.max_columns', None)
 
             Vendor_Name = filtered_products["Vendor_Name"]
             client_prods_df = pd.DataFrame(filtered_products["products"])
             crm_prods_df    = pd.DataFrame(all_crm_products)
-            print(f"[{Vendor_Name}] Comparing {len(client_prods_df)} client products against {len(crm_prods_df)} CRM products")
+            print(f"[{Vendor_Name}] {len(crm_prods_df)} CRM products, {len(client_prods_df)} SQL products")
 
-            if client_prods_df.empty:
-                print(f"[{Vendor_Name}] No client products — skipping.")
-                return {"Vendor_Name": Vendor_Name, "vendor_id": filtered_products.get("vendor_id", ""), "new_products": [], "mapped": filtered_products["mapped"]}
+            if crm_prods_df.empty:
+                print(f"[{Vendor_Name}] No CRM products — skipping.")
+                return {"Vendor_Name": Vendor_Name, "vendor_id": filtered_products.get("vendor_id", ""), "NIF": filtered_products.get("NIF", ""), "cm_email": filtered_products.get("cm_email", ""), "cm_name": filtered_products.get("cm_name", ""), "new_products": [], "mapped": filtered_products["mapped"]}
 
-            client_prods_df['CodProducto'] = pd.to_numeric(client_prods_df['CodProducto'], errors='coerce').astype('Int64')
-            crm_prods_df['Product_Code']   = pd.to_numeric(crm_prods_df['Product_Code'],   errors='coerce').astype('Int64')
-            crm_prods_df['EAN']            = pd.to_numeric(crm_prods_df['EAN'],             errors='coerce').astype('Int64')
-            
-            matched_by_code = set(pd.merge(client_prods_df, crm_prods_df, left_on='CodProducto', right_on='Product_Code', how='inner')['CodProducto'])
-            matched_by_ean  = set(pd.merge(client_prods_df, crm_prods_df, left_on='CodProducto', right_on='EAN',          how='inner')['CodProducto'])
-            already_in_crm  = matched_by_code | matched_by_ean
-            new_prods_df = client_prods_df[~client_prods_df['CodProducto'].isin(already_in_crm)]
-            print(f'{new_prods_df.columns}')
-            ean_lookup   = crm_prods_df[['Product_Code', 'EAN']].rename(columns={'Product_Code': 'CodProducto'})
-            new_prods_df = pd.merge(new_prods_df, ean_lookup, on='CodProducto', how='left')
-            new_prods_df = new_prods_df.drop_duplicates(subset=['CodProducto'])
-            print(f"[{Vendor_Name}] Found {len(new_prods_df)} new products not in CRM")
+            crm_prods_df['Product_Code'] = pd.to_numeric(crm_prods_df['Product_Code'], errors='coerce').astype('Int64')
+            crm_prods_df['EAN']          = pd.to_numeric(crm_prods_df['EAN'],           errors='coerce').astype('Int64')
+            if not client_prods_df.empty:
+                client_prods_df['CodProducto'] = pd.to_numeric(client_prods_df['CodProducto'], errors='coerce').astype('Int64')
+
+            merged = pd.merge(
+                crm_prods_df.rename(columns={'Product_Code': 'CodProducto'}),
+                client_prods_df,
+                on='CodProducto',
+                how='left',
+            ).drop_duplicates(subset=['CodProducto'])
+            print(f"[{Vendor_Name}] {len(merged)} products (all CRM, SQL data where available)")
             return {
                 "Vendor_Name": Vendor_Name,
-                "vendor_id": filtered_products.get("vendor_id", ""),
-                "cm_email": filtered_products.get("cm_email", ""),
-                "cm_name": filtered_products.get("cm_name", ""),
-                "new_products": new_prods_df.to_dict('records'),
-                "mapped": filtered_products["mapped"],
+                "vendor_id":   filtered_products.get("vendor_id", ""),
+                "cm_email":    filtered_products.get("cm_email", ""),
+                "cm_name":     filtered_products.get("cm_name", ""),
+                "NIF":         filtered_products.get("NIF", ""),
+                "new_products": merged.to_dict('records'),
+                "mapped":      filtered_products["mapped"],
             }
 
         @task
         def notify_categories(result: dict, all_contacts: list[dict]) -> dict:
-            """Send a notification email for this vendor's new products."""
-            from utils.clsZohoMailing import ZohoMailer
-
+            """Prepare per-vendor product data; email is sent later consolidated per CM."""
             Vendor_Name = result.get("Vendor_Name", "Unknown")
             vendor_id   = result.get("vendor_id", "")
             cm_email    = result.get("cm_email", "")
             cm_name     = result.get("cm_name", "")
+            nif         = result.get("NIF", "")
             new_prods   = result.get("new_products", [])
 
             first_name = ""
@@ -359,64 +359,94 @@ def novedades_sku_pharma_etl():
                 contact = next((c for c in all_contacts if isinstance(c.get("Vendor_Name"), dict) and c["Vendor_Name"].get("id") == vendor_id), None)
                 if contact:
                     first_name = contact.get("First_Name", "")
-            print(f"[{Vendor_Name}] Contact First_Name: '{first_name}'")
 
             new_prods = [row for row in new_prods if float(row.get('ImporteCompraAct') or 0) > 0]
 
-            if not new_prods:
-                print(f"[{Vendor_Name}] No new products — skipping notification.")
-                return {"Vendor_Name": Vendor_Name, "new_products": []}
-
-            import csv, io
-            buf = io.StringIO()
-            writer = csv.DictWriter(buf, fieldnames=[
-                'CodProducto', 'EAN', 'Producto', 'Laboratorio', 'GAMMA',
-                'PVL', 'IVA', 'Dto. Book 1', 'Dto. Book 2', 'Dto. Book 3',
-                'Unid. BOOK 1', 'Unid. BOOK 2', 'Unid. BOOK 3',
-                'Pack', 'Novedad', 'Opcional', 'Estado', 'Precio Unitario Compra', 'ImporteCompraAct', 'CantidadCompraAct'
-            ], extrasaction='ignore', restval='', delimiter=';')
-            writer.writeheader()
             DEFAULTS = {
                 'Estado': 'Inactivo', 'Novedad': 'Si', 'Opcional': 'Si',
                 'Dto. Book 1': 0, 'Dto. Book 2': 0, 'Dto. Book 3': 0,
                 'Unid. BOOK 1': 0, 'Unid. BOOK 2': 0, 'Unid. BOOK 3': 0,
             }
             for row in new_prods:
+                row['NIF'] = nif
                 for field, default in DEFAULTS.items():
                     row.setdefault(field, default)
                 try:
                     row['Precio Unitario Compra'] = round(float(row['ImporteCompraAct']) / float(row['CantidadCompraAct']), 2)
                 except (ZeroDivisionError, TypeError, ValueError):
                     row['Precio Unitario Compra'] = ''
-                writer.writerow(row)
 
-            csv_content = buf.getvalue()
-
-            greeting = f"<p>Hola {first_name}.</p>" if first_name else ""
-            html_body = (
-                f"{greeting}"
-                f"<p>El proceso Novedades SKU ha encontrado {len(new_prods)} productos nuevos para {Vendor_Name}.</p>"
-                f"<p>Se adjunta el listado en formato CSV.</p>"
-                f"<p>Por favor tu ayuda para rellenar los datos de PVL, Iva, Marca, Gamma.</p>"
-                f"<p>Lo necesitamos con urgencia, para actualizar los datos de SO y SI correctamente.</p>"
-                f"<p>Saludos.</p>"
-            )
-            subject = f"[Novedades SKU] {Vendor_Name} — {len(new_prods)} producto(s) nuevo(s)"
-            mailer = ZohoMailer()
-            mailer.send(
-                to=[{"address": cm_email, "name": cm_name}] if cm_email else [{"address": "meslava@ecoceutics.com", "name": "Marc Eslava"}],
-                subject=subject,
-                html_body=html_body,
-                attachments=[{"content": csv_content, "name": f"novedades_{Vendor_Name}.csv", "mime_type": "text/csv"}],
-            )
-            print(f"[{Vendor_Name}] Notification sent ({len(new_prods)} new products)")
-            return {"Vendor_Name": Vendor_Name, "new_products": new_prods}
+            print(f"[{Vendor_Name}] Prepared {len(new_prods)} products for CM {cm_email or 'none'}")
+            return {
+                "Vendor_Name":  Vendor_Name,
+                "cm_email":     cm_email,
+                "cm_name":      cm_name,
+                "first_name":   first_name,
+                "new_products": new_prods,
+            }
 
         # Wire the per-client pipeline
         mapped            = map_acords(client_data, all_acords)
         filtered_products = filter_products(mapped)
         result            = new_products(all_crm_products, filtered_products)
         return notify_categories(result, all_contacts)
+
+    @task(trigger_rule="all_done")
+    def notify_by_sender(results: list[dict]) -> None:
+        """One email per CM: single CSV with all their labs combined."""
+        import csv, io
+        from collections import defaultdict
+        from utils.clsZohoMailing import ZohoMailer
+
+        if not isinstance(results, list):
+            results = [results] if results else []
+
+        by_cm = defaultdict(lambda: {"cm_name": "", "first_name": "", "labs": [], "rows": []})
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            # cm_email = r.get("cm_email") or "meslava@ecoceutics.com"
+            cm_email = "meslava@ecoceutics.com"
+            by_cm[cm_email]["cm_name"]   = r.get("cm_name", "")
+            by_cm[cm_email]["first_name"] = r.get("first_name", "")
+            by_cm[cm_email]["labs"].append(r.get("Vendor_Name", ""))
+            by_cm[cm_email]["rows"].extend(r.get("new_products", []))
+
+        FIELDNAMES = [
+            'CodProducto', 'EAN', 'Producto', 'Laboratorio', 'NIF', 'Marca', 'GAMMA',
+            'PVL', 'IVA', 'Dto. Book 1', 'Dto. Book 2', 'Dto. Book 3',
+            'Unid. BOOK 1', 'Unid. BOOK 2', 'Unid. BOOK 3',
+            'Pack', 'Novedad', 'Opcional', 'Estado', 'Precio Unitario Compra', 'ImporteCompraAct', 'CantidadCompraAct',
+        ]
+        mailer = ZohoMailer()
+        for cm_email, data in by_cm.items():
+            rows = data["rows"]
+            if not rows:
+                print(f"[{cm_email}] No products — skipping.")
+                continue
+            buf = io.StringIO()
+            writer = csv.DictWriter(buf, fieldnames=FIELDNAMES, extrasaction='ignore', restval='', delimiter=';')
+            writer.writeheader()
+            writer.writerows(rows)
+
+            labs_str   = ", ".join(data["labs"])
+            greeting   = f"<p>Hola {data['first_name']}.</p>" if data["first_name"] else ""
+            html_body  = (
+                f"{greeting}"
+                f"<p>El proceso Novedades SKU ha encontrado {len(rows)} productos nuevos para: <b>{labs_str}</b>.</p>"
+                f"<p>Se adjunta el listado en formato CSV con todos los laboratorios.</p>"
+                f"<p>Por favor tu ayuda para rellenar los datos de PVL, Iva, Marca, Gamma.</p>"
+                f"<p>Lo necesitamos con urgencia, para actualizar los datos de SO y SI correctamente.</p>"
+                f"<p>Saludos.</p>"
+            )
+            subject = f"[Novedades SKU] {len(rows)} producto(s) nuevo(s) — {labs_str}"
+            mailer.send(
+                to=[{"address": cm_email, "name": data["cm_name"]}],
+                subject=subject,
+                html_body=html_body,
+                attachments=[{"content": buf.getvalue(), "name": "novedades_SKU.csv", "mime_type": "text/csv"}],
+            )
+            print(f"Sent to {cm_email}: {len(rows)} products across {len(data['labs'])} labs")
 
     @task(trigger_rule="all_done")
     def notify_summary(results: list[dict]) -> None:
@@ -478,6 +508,7 @@ def novedades_sku_pharma_etl():
     contacts     = extract_vendor_contacts()
     acords       = extract_acords()
     all_summaries = process_client.partial(all_acords=acords, all_crm_products=crm_products, all_contacts=contacts).expand(client_data=clients)
+    notify_by_sender(all_summaries)
     notify_summary(all_summaries)
 
 # Instantiate the DAG
