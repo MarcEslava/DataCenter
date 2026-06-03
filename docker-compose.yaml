@@ -44,8 +44,10 @@ x-airflow-common: &airflow-common
     FORWARDED_ALLOW_IPS: "*"
   volumes:
     - ./dags:/opt/airflow/dags
+    - ./docs:/opt/airflow/docs
     - ./setup_airflow_connections.py:/opt/airflow/setup_airflow_connections.py:ro
     - ./.env:/opt/airflow/.env:ro
+    - '${SSH_KEY_DIR:-~/.ssh}:/opt/airflow/.ssh:ro'
   depends_on:
     - postgres
 
@@ -298,6 +300,43 @@ services:
     ports: ["27017:27017"]
     volumes:
       - mongo_data:/data/db
+
+  # Persistent SSH tunnel to the internal DB servers via the bastion.
+  # Other containers reach the databases at host "db-tunnel" on the
+  # local ports below. Connections must point at db-tunnel, NOT 127.0.0.1.
+  db-tunnel:
+    <<: *common
+    image: alpine:3.20
+    hostname: db-tunnel
+    volumes:
+      - '${SSH_KEY_DIR:-~/.ssh}:/root/.ssh:ro'
+    environment:
+      SSH_KEY_NAME: ${SSH_KEY_NAME:-id_ed25519}
+      BASTION_HOST: ${BASTION_HOST}
+      BASTION_PORT: ${BASTION_PORT:-22}
+      BASTION_USER: ${BASTION_USER}
+      ECOFAMS_REMOTE_HOST: ${ECOFAMS_REMOTE_HOST}
+      ECOFAMS_REMOTE_PORT: ${ECOFAMS_REMOTE_PORT:-3306}
+      ECOEXTRACT_REMOTE_HOST: ${ECOEXTRACT_REMOTE_HOST}
+      ECOEXTRACT_REMOTE_PORT: ${ECOEXTRACT_REMOTE_PORT:-3306}
+      BIFARMA_REMOTE_HOST: ${BIFARMA_REMOTE_HOST}
+      BIFARMA_REMOTE_PORT: ${BIFARMA_REMOTE_PORT:-1433}
+    command: >
+      sh -c "apk add --no-cache autossh openssh-client >/dev/null &&
+      cp /root/.ssh/$${SSH_KEY_NAME} /tmp/key && chmod 600 /tmp/key &&
+      exec autossh -M 0 -N
+      -o ServerAliveInterval=30 -o ServerAliveCountMax=3
+      -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes
+      -i /tmp/key -p $${BASTION_PORT}
+      -L 0.0.0.0:3306:$${ECOFAMS_REMOTE_HOST}:$${ECOFAMS_REMOTE_PORT}
+      -L 0.0.0.0:3307:$${ECOEXTRACT_REMOTE_HOST}:$${ECOEXTRACT_REMOTE_PORT}
+      $${BASTION_USER}@$${BASTION_HOST}"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "nc -z localhost 3306 && nc -z localhost 3307"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
 volumes:
   postgres_data:
