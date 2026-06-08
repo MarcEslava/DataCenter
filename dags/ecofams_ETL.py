@@ -20,8 +20,9 @@ from airflow.models import Variable
 # Configuration
 # ─────────────────────────────────────────────────────────────
 
-ECOFAMS_CONN_ID    = "ecofams_db"        # ecofams mysql (FTP config lives here)
+ECOFAMS_CONN_ID    = "ecofams_db"        # ecofams mysql (FTP config + Excel_conversor)
 ECOEXTRACT_CONN_ID = "ecoextract_db"     # ecoextract mysql (Articu, Fam_SubFam_x_unit, Unit)
+BIFARMA_C_CONN_ID  = "bifarmaCentral_db" # mssql — BifarmaCentral (canonical product family)
 SSH_CONN_ID        = "ecoextract_ssh"    # bastion for the ingestion batch script
 
 # TEST MODE: write the per-pharmacy .txt files to LOCAL_TXT_DIR for inspection and
@@ -127,12 +128,14 @@ def ecofams_etl():
         Build and ship the per-pharmacy .txt. The only deliverable is the file
         ({unit}.txt) sent to ecofams via FTP, which the pharmacy DB then ingests.
 
-        Each file is the pharmacy's full article catalogue with family labels:
-            Articu (this unit) JOIN Fam_SubFam_x_unit on (unit, local family)
-        → columns cn / descripcion / FAMILIA / SUPERFAMILIA
+        Family labels: BifarmaCentral has PRIORITY. For each article, if its cn exists in
+        BifarmaCentral the canonical bifarma family is used; otherwise we fall back to the
+        pharmacy's LOCAL family from Fam_SubFam_x_unit (e.g. orthopedics not in bifarma).
+            cn / descripcion / FAMILIA / SUPERFAMILIA
         → tab-separated, CRLF, no header, ISO-8859-1, sorted by cn.
         """
         import os
+        import pandas as pd
         from utils.ftp import FTPConn
         if not farmacias:
             print("No farmacias to process")
@@ -144,8 +147,29 @@ def ecofams_etl():
             dialect="mysql").iloc[0]
         ftp_folder = str(ftp_cfg["folder_ftp"]).rstrip("/")
 
+        # ── Canonical bifarma family map (cn → FAMILIA/SUPERFAMILIA), built once. ──
+        # bifarma product family (efp=1 → 220) mapped through Excel_conversor → labels.
+        bif = _query_sql(BIFARMA_C_CONN_ID, """
+            SELECT codProducto,
+                   CASE WHEN efp = 1 THEN 220 ELSE idFamiliaEco END AS famEco
+            FROM [dbo].[tme_productos]
+            WHERE efp = 1 OR idFamiliaEco IS NOT NULL
+        """, dialect="mssql")
+        conv = _query_sql(ECOFAMS_CONN_ID, """
+            SELECT ec.idfamilia_Bifarmaeco AS famEco, ok.FAMILIA, ok.SUPERFAMILIA
+            FROM Excel_conversor ec
+            JOIN Excel_conversor_OK ok ON ec.id_Ecofams = ok.`CODIGO FAMILIA`
+        """, dialect="mysql")
+        bif['cnkey']  = bif['codProducto'].astype(str).str.strip()
+        bif['famEco'] = pd.to_numeric(bif['famEco'], errors='coerce')
+        conv['famEco'] = pd.to_numeric(conv['famEco'], errors='coerce')
+        bifmap = (bif.merge(conv, on='famEco', how='inner')[['cnkey', 'FAMILIA', 'SUPERFAMILIA']]
+                     .rename(columns={'FAMILIA': 'FAM_BIF', 'SUPERFAMILIA': 'SUP_BIF'})
+                     .drop_duplicates(subset=['cnkey']))
+        print(f"Bifarma family map: {len(bifmap)} cn entries")
+
         for f in farmacias:
-            unit =  10044  #f["idunit"]
+            unit = 233 # test with 10044 -- f["idunit"]
             df = _query_sql(ECOEXTRACT_CONN_ID, f"""
                 SELECT
                     a.idArticu    AS cn,
@@ -161,6 +185,14 @@ def ecofams_etl():
             if df.empty:
                 print(f"[{unit}] no articles — skipping")
                 continue
+
+            # bifarma priority: override the local family where bifarma has one for this cn
+            df['cnkey'] = df['cn'].astype(str).str.strip()
+            df = df.merge(bifmap, on='cnkey', how='left')
+            has_bif = df['FAM_BIF'].notna()
+            df.loc[has_bif, 'FAMILIA']      = df.loc[has_bif, 'FAM_BIF']
+            df.loc[has_bif, 'SUPERFAMILIA'] = df.loc[has_bif, 'SUP_BIF']
+            print(f"[{unit}] {int(has_bif.sum())}/{len(df)} families from bifarma, rest local")
 
             # tab-separated, CRLF, no header, ISO-8859-1 (Latin-1) — matching the legacy files.
             # Strip any tab/CR/LF embedded in the fields (some descriptions contain them) and
