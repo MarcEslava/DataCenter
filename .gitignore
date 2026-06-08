@@ -214,8 +214,11 @@ conf/httpd_conf/
 
 *.wmv
 
+*.txt
+
 # Test reports
 
 TEST*.xml
 
 test-results/
+

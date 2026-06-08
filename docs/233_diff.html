@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>233.txt — OG vs New diff</title>
+<style>
+  :root{--bg:#0f1117;--panel:#171a23;--panel2:#1e222d;--border:#2a2f3c;--txt:#e4e7ee;
+    --muted:#9aa3b2;--accent:#4f9cf9;--green:#3ecf8e;--amber:#f5a623;--red:#ff6b6b;--cyan:#46d3d8;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;line-height:1.55;font-size:15px}
+  header{padding:30px 40px;background:linear-gradient(135deg,#15233a,#141821);border-bottom:1px solid var(--border)}
+  header h1{margin:0;font-size:26px}
+  header .sub{color:var(--muted);margin-top:6px}
+  .wrap{max-width:1000px;margin:0 auto;padding:30px 40px}
+  h2{font-size:20px;margin:38px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+  code{background:var(--panel2);padding:2px 6px;border-radius:4px;font-size:13px;font-family:"SF Mono",Consolas,monospace;color:#e0c98a}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:16px 0}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:16px}
+  .card .v{font-size:26px;font-weight:700}
+  .card .k{color:var(--muted);font-size:12px;text-transform:uppercase;margin-top:4px}
+  .card.green .v{color:var(--green)} .card.amber .v{color:var(--amber)} .card.blue .v{color:var(--accent)} .card.red .v{color:var(--red)}
+  table{width:100%;border-collapse:collapse;margin:14px 0;background:var(--panel)}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13.5px;vertical-align:top}
+  th{background:var(--panel2);color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.5px}
+  tr:last-child td{border-bottom:none}
+  .old{color:var(--red)} .new{color:var(--green)} .arrow{color:var(--muted)}
+  .ok{background:#16291f;border-left:4px solid var(--green);padding:12px 16px;border-radius:6px;margin:12px 0}
+  .note{background:#2a2218;border-left:4px solid var(--amber);padding:12px 16px;border-radius:6px;margin:12px 0}
+  .muted{color:var(--muted)} ul{padding-left:22px} li{margin:4px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>233.txt — Original vs New</h1>
+  <div class="sub">Comparison of <code>233_og.txt</code> (legacy) and <code>233.txt</code> (current pipeline) for FARMACIA MARTA PARES.</div>
+</header>
+<div class="wrap">
+
+  <h2>Headline</h2>
+  <div class="grid">
+    <div class="card blue"><div class="v">8,489</div><div class="k">OG rows</div></div>
+    <div class="card blue"><div class="v">9,323</div><div class="k">New rows</div></div>
+    <div class="card green"><div class="v">8,489</div><div class="k">Common cn (all OG present)</div></div>
+    <div class="card green"><div class="v">+834</div><div class="k">New-only (added since OG)</div></div>
+    <div class="card"><div class="v">0</div><div class="k">OG-only (lost)</div></div>
+  </div>
+  <div class="ok">
+    <b>No products lost.</b> Every cn in the legacy file is present in the new one; the new file
+    is a strict superset. The extra 834 are products added to the catalogue since the old snapshot.
+    All rows have exactly 4 columns; no blank family labels.
+  </div>
+
+  <h2>Changes on the 8,489 shared products</h2>
+  <div class="grid">
+    <div class="card amber"><div class="v">203</div><div class="k">FAMILIA changed (2.4%)</div></div>
+    <div class="card amber"><div class="v">164</div><div class="k">SUPERFAMILIA changed (1.9%)</div></div>
+    <div class="card amber"><div class="v">1,302</div><div class="k">Descripción changed (15%)</div></div>
+  </div>
+
+  <h2>Family re-categorisations — mostly fixes</h2>
+  <p>Family changes come from <b>BifarmaCentral now taking priority</b> over the pharmacy's local
+  family. In practice this <b>corrects</b> wrong local categories. Examples:</p>
+  <table>
+    <tr><th>cn</th><th>Product</th><th>OG family</th><th></th><th>New family</th></tr>
+    <tr><td>000048</td><td>BETER LOOK EXPERT LIP LINER</td><td class="old">ADELGAZAMIENTO</td><td class="arrow">→</td><td class="new">COSMETICA-MAQUILLAJE</td></tr>
+    <tr><td>000377</td><td>PATYKA PACK NETTOYANT ECLAT</td><td class="old">COSMETICA-CREMAS FACIALES</td><td class="arrow">→</td><td class="new">COSMETICA-LIMPIEZA FACIAL</td></tr>
+    <tr><td>000649</td><td>ELBIA CREMA DE POLLO 7 SOBRES</td><td class="old">DIETAS ESPECIALES</td><td class="arrow">→</td><td class="new">COMPLEMENTOS ALIMENTARIOS</td></tr>
+    <tr><td>000966</td><td>PATYKA CLEAN LAIT DEMAQUILLANT</td><td class="old">COSMETICA-MAQUILLAJE</td><td class="arrow">→</td><td class="new">COSMETICA-LIMPIEZA FACIAL</td></tr>
+  </table>
+  <p class="muted">A lip liner filed under "ADELGAZAMIENTO" (slimming) becoming "COSMETICA-MAQUILLAJE"
+  (make-up) is the canonical bifarma family fixing a local mis-classification.</p>
+
+  <h3>Top family transitions</h3>
+  <table>
+    <tr><th>count</th><th>OG family</th><th></th><th>New family</th></tr>
+    <tr><td>25</td><td class="old">BEBES -MADRES</td><td class="arrow">→</td><td class="new">COSMETICA-MAQUILLAJE</td></tr>
+    <tr><td>11</td><td class="old">CONSEJO-SIS.MUSCULAR-OSEO</td><td class="arrow">→</td><td class="new">OTC</td></tr>
+    <tr><td>10</td><td class="old">(none)</td><td class="arrow">→</td><td class="new">PDTE.ASIGNAR</td></tr>
+    <tr><td>6</td><td class="old">HOMEOPATIA</td><td class="arrow">→</td><td class="new">OTC</td></tr>
+    <tr><td>5</td><td class="old">BEBES -ALIMENTACION INF.</td><td class="arrow">→</td><td class="new">BEBES -ACCESORIOS</td></tr>
+  </table>
+  <div class="note">
+    ~10 products moved <b>to <code>PDTE.ASIGNAR</code></b> — these are pending in both bifarma and
+    local, so they show as unassigned until someone classifies them. Everything else is a
+    re-categorisation toward the canonical bifarma family.
+  </div>
+
+  <h2>Description changes (1,302)</h2>
+  <p>Descriptions changed because the source product text was updated since the old snapshot — not
+  a pipeline change. Example for <code>000001</code>:</p>
+  <table>
+    <tr><th></th><th>Text</th></tr>
+    <tr><td class="old">OG</td><td>BETER CEPILLO CHARM 03401 PEQUEÑO</td></tr>
+    <tr><td class="new">New</td><td>BETTER HAIR CEPILLO MINI</td></tr>
+  </table>
+  <p class="muted">The legacy file also showed Latin-1 artefacts (e.g. <code>PEQUE�O</code>) when
+  viewed as UTF-8; the new file is written in the correct ISO-8859-1 encoding.</p>
+
+  <h2>Summary</h2>
+  <ul>
+    <li><b>Superset, nothing lost</b> — all 8,489 legacy products are present; +834 new ones.</li>
+    <li><b>Family changes are corrections</b> — 203 (2.4%) re-categorised via bifarma priority, fixing wrong local labels.</li>
+    <li><b>Descriptions</b> — 1,302 updated at source; the pipeline just reflects current data.</li>
+    <li><b>Format clean</b> — 4 columns throughout, no blank families, correct encoding.</li>
+  </ul>
+
+  <p class="muted" style="margin-top:36px;border-top:1px solid var(--border);padding-top:16px">
+    Diff of <code>docs/233_og.txt</code> vs <code>docs/233.txt</code>.
+  </p>
+</div>
+</body>
+</html>
