@@ -330,6 +330,8 @@ services:
       -i /tmp/key -p $${BASTION_PORT}
       -L 0.0.0.0:3306:$${ECOFAMS_REMOTE_HOST}:$${ECOFAMS_REMOTE_PORT}
       -L 0.0.0.0:3307:$${ECOEXTRACT_REMOTE_HOST}:$${ECOEXTRACT_REMOTE_PORT}
+      -L 0.0.0.0:3308:10.20.10.4:3306
+      -L 0.0.0.0:1434:10.20.10.4:1433
       $${BASTION_USER}@$${BASTION_HOST}"
     healthcheck:
       test: ["CMD", "sh", "-c", "nc -z localhost 3306 && nc -z localhost 3307"]

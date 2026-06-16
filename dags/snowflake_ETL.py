@@ -137,6 +137,7 @@ def _query_mssql(sql: str):
 def _load_snowflake(df, table: str, colmap: dict) -> int:
     """Rename source columns to the Snowflake column names, truncate the target table and
     load the DataFrame. Returns the row count loaded."""
+    import pandas as pd
     import snowflake.connector
     from snowflake.connector.pandas_tools import write_pandas
     from airflow.hooks.base import BaseHook
@@ -151,6 +152,14 @@ def _load_snowflake(df, table: str, colmap: dict) -> int:
         keep.append(actual)
         rename[actual] = tgt
     out = df[keep].rename(columns=rename)
+
+    # datetime columns → 'YYYY-MM-DD' strings: the target columns are DATE, and write_pandas
+    # would otherwise send datetime64 as nanosecond-epoch ints that Snowflake can't cast to DATE.
+    for col in out.columns:
+        if pd.api.types.is_datetime64_any_dtype(out[col]):
+            mask = out[col].notna()
+            out[col] = out[col].dt.strftime("%Y-%m-%d")
+            out.loc[~mask, col] = None
 
     conn  = BaseHook.get_connection(SNOWFLAKE_CONN_ID)
     extra = conn.extra_dejson

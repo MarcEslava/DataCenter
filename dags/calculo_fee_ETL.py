@@ -754,7 +754,7 @@ def calculo_fee_etl():
                 f"<p>Atentamente,<br>{owner_name}<br>Category Manager<br>Hygie31 España<br>{owner_email}</p>"
             )
             ZohoMailer().send(
-                to=[{"address": "meslava@ecoceutics.com", "name": owner_name}],
+                to=[{"address": owner_email, "name": owner_name}],
                 subject=f"[Informe mensual] {lab}{part_label} — {rappel} {period or 'mensual'}",
                 html_body=html_body,
                 attachments=attachments,
