@@ -45,6 +45,7 @@ x-airflow-common: &airflow-common
   volumes:
     - ./dags:/opt/airflow/dags
     - ./docs:/opt/airflow/docs
+    - ./data:/opt/airflow/data
     - ./setup_airflow_connections.py:/opt/airflow/setup_airflow_connections.py:ro
     - ./.env:/opt/airflow/.env:ro
     - '${SSH_KEY_DIR:-~/.ssh}:/opt/airflow/.ssh:ro'

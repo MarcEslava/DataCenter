@@ -32,6 +32,7 @@ class FTPConn:
 
     Set protocol='sftp' for SFTP connections (uses paramiko).
     Set protocol='ftp' for plain FTP connections (uses ftplib).
+    Set protocol='ftps' for explicit FTP over TLS (uses ftplib.FTP_TLS).
     """
 
     def __init__(
@@ -83,10 +84,12 @@ class FTPConn:
         return paramiko.SFTPClient.from_transport(transport)
 
     def _connect_ftp(self):
-        """Open plain FTP connection with NAT-safe PASV."""
-        from ftplib import FTP
+        """Open an FTP connection with NAT-safe PASV. protocol='ftps' uses explicit FTP over TLS."""
+        from ftplib import FTP, FTP_TLS
+        use_tls = self.protocol == "ftps"
+        base_cls = FTP_TLS if use_tls else FTP
 
-        class NatFTP(FTP):
+        class NatFTP(base_cls):
             """Override makepasv to use the control-connection IP instead of
             whatever the server returns in its PASV response (NAT fix)."""
             def makepasv(self):
@@ -97,13 +100,18 @@ class FTPConn:
                     print(f"[FTP DEBUG] PASV NAT fix: {host} -> {ctrl_host}")
                 return ctrl_host, port
 
-        print(f"[FTP DEBUG] Opening FTP connection to {self.host}:{self.port}")
+        print(f"[FTP DEBUG] Opening {'FTPS' if use_tls else 'FTP'} connection to {self.host}:{self.port}")
         ftp = NatFTP()
         ftp.connect(self.host, self.port, timeout=30)
+        if use_tls:
+            print(f"[FTP DEBUG] Starting explicit TLS (AUTH TLS)")
+            ftp.auth()               # secure the control channel before logging in
         print(f"[FTP DEBUG] Logging in as user: {self.user}")
         ftp.login(self.user, self.password)
+        if use_tls:
+            ftp.prot_p()             # secure the data channel too
         ftp.set_pasv(True)
-        print(f"[FTP DEBUG] FTP connection established (NAT-safe PASV)")
+        print(f"[FTP DEBUG] {'FTPS' if use_tls else 'FTP'} connection established (NAT-safe PASV)")
         return ftp
 
     def __enter__(self):
