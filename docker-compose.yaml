@@ -27,7 +27,7 @@ x-airflow-common: &airflow-common
     context: .
     dockerfile: Dockerfile.airflow
   environment: &airflow-common-env
-    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-microsoft-mssql pymssql xlsxwriter python-dateutil"
+    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-microsoft-mssql pymssql xlsxwriter python-dateutil snowflake-connector-python[pandas] openpyxl"
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:-this_is_a_very_secured_key_change_in_production}
@@ -45,6 +45,7 @@ x-airflow-common: &airflow-common
   volumes:
     - ./dags:/opt/airflow/dags
     - ./docs:/opt/airflow/docs
+    - ./data:/opt/airflow/data
     - ./setup_airflow_connections.py:/opt/airflow/setup_airflow_connections.py:ro
     - ./.env:/opt/airflow/.env:ro
     - '${SSH_KEY_DIR:-~/.ssh}:/opt/airflow/.ssh:ro'
@@ -330,6 +331,8 @@ services:
       -i /tmp/key -p $${BASTION_PORT}
       -L 0.0.0.0:3306:$${ECOFAMS_REMOTE_HOST}:$${ECOFAMS_REMOTE_PORT}
       -L 0.0.0.0:3307:$${ECOEXTRACT_REMOTE_HOST}:$${ECOEXTRACT_REMOTE_PORT}
+      -L 0.0.0.0:3308:10.20.10.4:3306
+      -L 0.0.0.0:1434:10.20.10.4:1433
       $${BASTION_USER}@$${BASTION_HOST}"
     healthcheck:
       test: ["CMD", "sh", "-c", "nc -z localhost 3306 && nc -z localhost 3307"]

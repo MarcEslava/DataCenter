@@ -169,7 +169,7 @@ def ecofams_etl():
         print(f"Bifarma family map: {len(bifmap)} cn entries")
 
         for f in farmacias:
-            unit = 233 # test with 10044 -- f["idunit"]
+            unit = f["idunit"] # test with 10044 -- f["idunit"]
             df = _query_sql(ECOEXTRACT_CONN_ID, f"""
                 SELECT
                     a.idArticu    AS cn,
