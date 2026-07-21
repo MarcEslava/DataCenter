@@ -1,11 +1,12 @@
-image: atlassian/default-image:3
+image: buildpack-deps:curl
 
 pipelines:
   branches:
-    main:
+    "release/production":
       - step:
-          name: Call remote hook (Deploy to Production)
+          name: Call remote hook (Deploy to CECO13)
           deployment: Production
           script:
             - chmod +x ./call_remote_hook_deploy.sh
-            - ./call_remote_hook_deploy.sh --url "$HOOK_DEPLOY_URL" --hook "$HOOK_DEPLOY_NAME" --secret "$HOOK_DEPLOY_SECRET"
+            - ./call_remote_hook_deploy.sh --url "$HOOK_DEPLOY_CECO13_URL" --hook "$HOOK_DEPLOY_NAME" --secret "$HOOK_DEPLOY_CECO13_SECRET"
+

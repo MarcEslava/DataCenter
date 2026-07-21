@@ -486,7 +486,7 @@ def task_upload_to_ftp(**context):
 
     max_pedido = context['task_instance'].xcom_pull(task_ids='cleanup_ftp') or 0
     df = df[df['N Pedido'].astype(int) > int(max_pedido)]
-    print(f"Uploading pedidos > {max_pedido}: {df['N Pedido'].nunique()} pedidos")
+    print(f"Uploading pedidos > {max_pedido}: {df['N Pedido'].nunique()} pAquí tienesedidos")
     if df.empty:
         print("No new pedidos to upload")
         return []
