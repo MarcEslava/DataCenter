@@ -201,6 +201,8 @@ def ecofams_etl():
             clean = df[cols].apply(
                 lambda c: c.fillna('').astype(str).str.replace(r'[\t\r\n]+', ' ', regex=True).str.strip()
             )
+            # descripcion is VARCHAR(48) in the pharmacy DB — truncate so ingestion doesn't crash.
+            clean['descripcion'] = clean['descripcion'].str.slice(0, 48).str.strip()
             lines   = clean.apply('\t'.join, axis=1)
             content = ('\r\n'.join(lines) + '\r\n').encode('latin-1', errors='replace')
 

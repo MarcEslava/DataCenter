@@ -102,6 +102,24 @@ CONNECTIONS = [
         schema=env("NOVEDADES_PRODUCTS_DB_SCHEMA"),
     ),
     Connection(
+        conn_id="ecoextract_src",                       # ecoBuy source (Farmatic mirror), via db-tunnel
+        conn_type="mysql",
+        host=env("ECOEXTRACT_SRC_DB_HOST", "db-tunnel"),
+        login=env("ECOEXTRACT_SRC_DB_LOGIN"),
+        password=env("ECOEXTRACT_SRC_DB_PASSWORD"),
+        port=int(env("ECOEXTRACT_SRC_DB_PORT", "3307")),
+        schema=env("ECOEXTRACT_SRC_DB_SCHEMA", "ecoextract"),
+    ),
+    Connection(
+        conn_id="ecobuy_dst",                           # ecoBuy target (normalized), via db-tunnel
+        conn_type="mysql",
+        host=env("ECOBUY_DST_DB_HOST", "db-tunnel"),
+        login=env("ECOBUY_DST_DB_LOGIN"),
+        password=env("ECOBUY_DST_DB_PASSWORD"),
+        port=int(env("ECOBUY_DST_DB_PORT", "3308")),
+        schema=env("ECOBUY_DST_DB_SCHEMA", "ecobuy"),
+    ),
+    Connection(
         conn_id="zoho_crm",
         conn_type="generic",
         login=env("ZOHO_CLIENT_ID"),
