@@ -236,11 +236,12 @@ def listado_referencias_etl():
         out["Plataforma "]  = col(FIELD["Plataforma"])
         out["Unidades Descuento"] = col(FIELD["Unidades Descuento"])
 
-        # Familia / Superfamilia from BIFarma, matched by CN.
+        # Familia / Superfamilia from BIFarma, matched by CN. round() before Int64 so a
+        # non-integer/float-precision value doesn't fail the "safe" cast.
         fam = pd.read_csv(families_file)
-        fam["_cnkey"] = pd.to_numeric(fam["CN"], errors="coerce").astype("Int64")
-        fam = fam.drop_duplicates(subset=["_cnkey"])
-        cnkey = pd.to_numeric(out["CN"], errors="coerce").astype("Int64")
+        fam["_cnkey"] = pd.to_numeric(fam["CN"], errors="coerce").round().astype("Int64")
+        fam = fam.dropna(subset=["_cnkey"]).drop_duplicates(subset=["_cnkey"])
+        cnkey = pd.to_numeric(out["CN"], errors="coerce").round().astype("Int64")
         fam_by_cn = fam.set_index("_cnkey")
         out["Familia"]      = cnkey.map(fam_by_cn["Familia"]).fillna("")
         out["Superfamilia"] = cnkey.map(fam_by_cn["Superfamilia"]).fillna("")

@@ -134,7 +134,8 @@ Desktop.ini
 
 *.log
 
-logs/
+logs/*
+!logs/.gitkeep
 
 *.log.*
 
@@ -186,7 +187,8 @@ output/
 
 # Airflow
 
-logs/
+logs/*
+!logs/.gitkeep
 
 airflow.db
 
