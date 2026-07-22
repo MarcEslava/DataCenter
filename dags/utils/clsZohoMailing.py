@@ -56,7 +56,7 @@ class ZohoMailer:
         if attachments:
             payload["attachments"] = [
                 {
-                    "content":   base64.b64encode(a["content"].encode()).decode(),
+                    "content":   base64.b64encode(a["content"] if isinstance(a["content"], bytes) else a["content"].encode()).decode(),
                     "mime_type": a.get("mime_type", "text/csv"),
                     "name":      a["name"],
                 }

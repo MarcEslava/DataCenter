@@ -23,9 +23,11 @@ x-deploy-medium: &deploy-medium
 
 x-airflow-common: &airflow-common
   <<: *common
-  image: apache/airflow:3.0.1
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
   environment: &airflow-common-env
-    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-microsoft-mssql pymssql"
+    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-microsoft-mssql pymssql xlsxwriter python-dateutil snowflake-connector-python[pandas] openpyxl"
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:-this_is_a_very_secured_key_change_in_production}
@@ -34,13 +36,30 @@ x-airflow-common: &airflow-common
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-tcDqV0CAB6yubbpSpxjdIA==}
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:-jpI3a/LHtBgnJZ8KUx90zg==}
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    AIRFLOW__LOGGING__LOGGING_LEVEL: ERROR
+    AIRFLOW__CORE__HOSTNAME_CALLABLE: "socket.gethostname"
+    # ── Logging ────────────────────────────────────────────────
+    AIRFLOW__LOGGING__LOGGING_LEVEL: ${AIRFLOW_LOGGING_LEVEL:-ERROR}
+    AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs          # persisted to ./logs on the host
+    # Remote logging — OFF by default. To ship straight to your logs backend
+    # (S3/GCS/Elasticsearch/Loki-via-conn), set these in .env:
+    #   AIRFLOW_REMOTE_LOGGING=True
+    #   AIRFLOW_REMOTE_BASE_LOG_FOLDER=s3://my-bucket/airflow   (or es://, gs://…)
+    #   AIRFLOW_REMOTE_LOG_CONN_ID=my_logs_conn
+    AIRFLOW__LOGGING__REMOTE_LOGGING: ${AIRFLOW_REMOTE_LOGGING:-False}
+    AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: ${AIRFLOW_REMOTE_BASE_LOG_FOLDER:-}
+    AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: ${AIRFLOW_REMOTE_LOG_CONN_ID:-}
+    AIRFLOW__CORE__STALE_BUNDLE_CLEANUP_MIN_VERSIONS: "100"
+    AIRFLOW__CORE__MIN_SERIALIZED_DAG_UPDATE_INTERVAL: "600"
     AIRFLOW__WEBSERVER__BASE_URL: ${AIRFLOW_BASE_URL:-http://datahub.local/airflow}
     FORWARDED_ALLOW_IPS: "*"
   volumes:
     - ./dags:/opt/airflow/dags
+    - ./docs:/opt/airflow/docs
+    - ./data:/opt/airflow/data
+    - ./logs:/opt/airflow/logs           # task logs persisted to host for the logs system
     - ./setup_airflow_connections.py:/opt/airflow/setup_airflow_connections.py:ro
     - ./.env:/opt/airflow/.env:ro
+    - '${SSH_KEY_DIR:-~/.ssh}:/opt/airflow/.ssh:ro'
   depends_on:
     - postgres
 
@@ -198,6 +217,7 @@ services:
     deploy: *deploy-medium
     volumes:
       - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs           # read task logs to serve them in the UI
       - ./conf/airflow.cfg:/airflow.cfg
       - ./setup_airflow_connections.py:/opt/airflow/setup_airflow_connections.py:ro
       - ./.env:/opt/airflow/.env:ro
@@ -223,6 +243,7 @@ services:
   dag-processor:
     <<: *airflow-common
     command: bash -lc "exec airflow dag-processor"
+    hostname: dag-processor
     environment:
       <<: *airflow-common-env
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://apiserver:8080/execution/
@@ -292,6 +313,45 @@ services:
     ports: ["27017:27017"]
     volumes:
       - mongo_data:/data/db
+
+  # Persistent SSH tunnel to the internal DB servers via the bastion.
+  # Other containers reach the databases at host "db-tunnel" on the
+  # local ports below. Connections must point at db-tunnel, NOT 127.0.0.1.
+  db-tunnel:
+    <<: *common
+    image: alpine:3.20
+    hostname: db-tunnel
+    volumes:
+      - '${SSH_KEY_DIR:-~/.ssh}:/root/.ssh:ro'
+    environment:
+      SSH_KEY_NAME: ${SSH_KEY_NAME:-id_ed25519}
+      BASTION_HOST: ${BASTION_HOST}
+      BASTION_PORT: ${BASTION_PORT:-22}
+      BASTION_USER: ${BASTION_USER}
+      ECOFAMS_REMOTE_HOST: ${ECOFAMS_REMOTE_HOST}
+      ECOFAMS_REMOTE_PORT: ${ECOFAMS_REMOTE_PORT:-3306}
+      ECOEXTRACT_REMOTE_HOST: ${ECOEXTRACT_REMOTE_HOST}
+      ECOEXTRACT_REMOTE_PORT: ${ECOEXTRACT_REMOTE_PORT:-3306}
+      BIFARMA_REMOTE_HOST: ${BIFARMA_REMOTE_HOST}
+      BIFARMA_REMOTE_PORT: ${BIFARMA_REMOTE_PORT:-1433}
+    command: >
+      sh -c "apk add --no-cache autossh openssh-client >/dev/null &&
+      cp /root/.ssh/$${SSH_KEY_NAME} /tmp/key && chmod 600 /tmp/key &&
+      exec autossh -M 0 -N
+      -o ServerAliveInterval=30 -o ServerAliveCountMax=3
+      -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes
+      -i /tmp/key -p $${BASTION_PORT}
+      -L 0.0.0.0:3306:$${ECOFAMS_REMOTE_HOST}:$${ECOFAMS_REMOTE_PORT}
+      -L 0.0.0.0:3307:$${ECOEXTRACT_REMOTE_HOST}:$${ECOEXTRACT_REMOTE_PORT}
+      -L 0.0.0.0:3308:10.20.10.4:3306
+      -L 0.0.0.0:1434:10.20.10.4:1433
+      $${BASTION_USER}@$${BASTION_HOST}"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "nc -z localhost 3306 && nc -z localhost 3307"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
 volumes:
   postgres_data:
