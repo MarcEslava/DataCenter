@@ -315,10 +315,12 @@ services:
       - mongo_data:/data/db
 
   # Persistent SSH tunnel to the internal DB servers via the bastion.
-  # Other containers reach the databases at host "db-tunnel" on the
-  # local ports below. Connections must point at db-tunnel, NOT 127.0.0.1.
+  # LOCAL DEV ONLY (profile "dev") — production connects to the DBs directly, so the
+  # tunnel isn't started there. Locally, bring it up with `docker compose --profile dev up`
+  # (or `bash setup.sh --dev`). Other containers reach the DBs at host "db-tunnel".
   db-tunnel:
     <<: *common
+    profiles: ["dev"]
     image: alpine:3.20
     hostname: db-tunnel
     volumes:

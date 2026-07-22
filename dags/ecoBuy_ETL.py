@@ -4,7 +4,7 @@ EcoBuy ETL  ·  exact port of the Talend job `Ejecuta_Fases_ecobuy` (Carga_Incre
 Per-pharmacy incremental sync  ecoextract (Farmatic mirror, Spanish)  →  ecobuy (normalized).
 See docs/ecoBuy_talend_mapping.md for the full source→target mapping this file implements.
 
-Flow (per unit from `SELECT id, id_ecobuy FROM Unit WHERE ecobuy=2`):
+Flow (per unit from `SELECT id, id_ecobuy FROM Unit WHERE ecobuy <> 0`):
   Phase 1 (master)       : providers, superfamilies, families, laboratories, iva, iva_groups (+ defaults)
   Phase 2 (transactions) : products, orders, purchases + details, receptions + details,
                            product_lists + products   (incremental on `_updated >= Fecha_Desde`)
@@ -102,7 +102,7 @@ def _to_records(df):
 # ─────────────────────────────────────────────────────────────
 
 @dag(
-    dag_id="ecoBuy_ETL",
+    dag_id="ecobuy_ETL",
     description="Incremental ecoextract → ecobuy per pharmacy (exact Talend port)",
     schedule=Variable.get("ecobuy_schedule", default_var="0 2 * * *"),  # nightly 02:00
     start_date=datetime(2024, 1, 1),
@@ -114,10 +114,10 @@ def ecobuy_etl():
 
     @task
     def extract_units() -> list[dict]:
-        """Pharmacies enrolled in ecobuy: SELECT id, id_ecobuy FROM Unit WHERE ecobuy=2."""
+        """Pharmacies enrolled in ecobuy: SELECT id, id_ecobuy FROM Unit WHERE ecobuy <> 0."""
         s = _db(SRC_CONN_ID)
         try:
-            df = _read(s, "SELECT id, id_ecobuy FROM Unit WHERE ecobuy = 2")
+            df = _read(s, "SELECT id, id_ecobuy FROM Unit WHERE ecobuy <> 0")
         finally:
             s.close()
         units = [{"id_unit": int(r["id"]), "id_ecobuy": int(r["id_ecobuy"])} for _, r in df.iterrows()]
