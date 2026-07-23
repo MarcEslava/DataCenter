@@ -120,6 +120,24 @@ CONNECTIONS = [
         schema=env("ECOBUY_DST_DB_SCHEMA", "ecobuy"),
     ),
     Connection(
+        conn_id="bifarma_origen",                       # KPI mailing source — default catalog MUST be `bifarma`
+        conn_type="mssql",
+        host=env("BIFARMA_DB_HOST"),
+        login=env("BIFARMA_DB_LOGIN"),
+        password=env("BIFARMA_DB_PASSWORD"),
+        port=int(env("BIFARMA_DB_PORT", "1433")),
+        schema=env("BIFARMA_DB_SCHEMA", "bifarma"),
+    ),
+    Connection(
+        conn_id="bifarma_agreg_db",                     # KPI mailing — "transformadas" flag DB
+        conn_type="mssql",
+        host=env("BIFARMA_AGREG_DB_HOST"),
+        login=env("BIFARMA_AGREG_DB_LOGIN"),
+        password=env("BIFARMA_AGREG_DB_PASSWORD"),
+        port=int(env("BIFARMA_AGREG_DB_PORT", "1433")),
+        schema=env("BIFARMA_AGREG_DB_SCHEMA", "bifarma_agreg"),
+    ),
+    Connection(
         conn_id="zoho_crm",
         conn_type="generic",
         login=env("ZOHO_CLIENT_ID"),

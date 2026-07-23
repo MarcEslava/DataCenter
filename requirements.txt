@@ -8,3 +8,5 @@ requests
 openpyxl
 sshtunnel
 sqlalchemy
+weasyprint
+jinja2
