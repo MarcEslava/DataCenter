@@ -1,4 +1,4 @@
- #!/bin/bash
+#!/bin/bash
 set -euo pipefail
 
 usage()
@@ -21,7 +21,6 @@ Opciones:
   --signature-header <header>      Header de firma (por defecto: X-DCT-Signature)
   --content-type <tipo>            Content-Type (por defecto: application/json)
   -h, --help                       Muestra esta ayuda
-
 
 Ejemplo:
   $0 --payload '{"source":"manual","branch":"main"}'
