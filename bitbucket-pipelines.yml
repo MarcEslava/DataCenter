@@ -17,10 +17,7 @@ pipelines:
       - step:
           name: Check
           script:
-            - bash ./call_remote_hook.sh \
-                --url "$HOOK_DEPLOY_CECO13_URL" \
-                --secret "$HOOK_DEPLOY_CECO13_SECRET" \
-                --hook "$HOOK_CHECK_NAME"
+            - bash ./call_remote_hook.sh --url "$HOOK_DEPLOY_CECO13_URL" --secret "$HOOK_DEPLOY_CECO13_SECRET" --hook "$HOOK_CHECK_NAME"
 
       - step:
           name: SonarQube analysis
@@ -42,7 +39,4 @@ pipelines:
           deployment: Production
           script:
             - chmod +x ./call_remote_hook_deploy.sh
-            - ./call_remote_hook_deploy.sh \
-                --url "$HOOK_DEPLOY_CECO13_URL" \
-                --hook "$HOOK_DEPLOY_NAME" \
-                --secret "$HOOK_DEPLOY_CECO13_SECRET"
+            - ./call_remote_hook_deploy.sh --url "$HOOK_DEPLOY_CECO13_URL" --hook "$HOOK_DEPLOY_NAME" --secret "$HOOK_DEPLOY_CECO13_SECRET"
