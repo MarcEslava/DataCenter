@@ -3,27 +3,30 @@ image: buildpack-deps:curl
 definitions:
   caches:
     sonar: ~/.sonar
+
   services:
     docker:
-      memory: 4096 
+      memory: 4096
+
 clone:
   depth: 50
 
-
 pipelines:
   branches:
-
-  "main":
+    main:
       - step:
           name: Check
           script:
-            - bash ./call_remote_hook.sh --url "$HOOK_DEPLOY_CECO13_URL" --secret "$HOOK_DEPLOY_CECO13_SECRET" --hook "$HOOK_CHECK_NAME" 
+            - bash ./call_remote_hook.sh \
+                --url "$HOOK_DEPLOY_CECO13_URL" \
+                --secret "$HOOK_DEPLOY_CECO13_SECRET" \
+                --hook "$HOOK_CHECK_NAME"
 
       - step:
           name: SonarQube analysis
-          size: 2x 
+          size: 2x
           services:
-            - docker 
+            - docker
           caches:
             - sonar
           script:
@@ -31,13 +34,15 @@ pipelines:
               variables:
                 SONAR_HOST_URL: ${SONAR_HOST_URL}
                 SONAR_TOKEN: ${SONAR_TOKEN}
-                SONAR_SCANNER_OPTS: "-Xmx3072m" 
+                SONAR_SCANNER_OPTS: "-Xmx3072m"
 
-    "release/production":
+    release/production:
       - step:
           name: Call remote hook (Deploy to CECO13)
           deployment: Production
           script:
             - chmod +x ./call_remote_hook_deploy.sh
-            - ./call_remote_hook_deploy.sh --url "$HOOK_DEPLOY_CECO13_URL" --hook "$HOOK_DEPLOY_NAME" --secret "$HOOK_DEPLOY_CECO13_SECRET"
-
+            - ./call_remote_hook_deploy.sh \
+                --url "$HOOK_DEPLOY_CECO13_URL" \
+                --hook "$HOOK_DEPLOY_NAME" \
+                --secret "$HOOK_DEPLOY_CECO13_SECRET"
