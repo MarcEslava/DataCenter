@@ -12,6 +12,13 @@ RUN apt-get update && \
     ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc-dev && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# WeasyPrint runtime libraries (HTML/CSS -> PDF for the KPI mailing reports)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 \
+        libffi-dev shared-mime-info fonts-liberation && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 USER airflow
 
-RUN pip install --no-cache-dir pyodbc
+RUN pip install --no-cache-dir pyodbc weasyprint jinja2

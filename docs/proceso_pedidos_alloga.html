@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Proceso de Pedidos Alloga (EcoVital) — Runbook</title>
+<style>
+  :root{
+    --green:#00A19A; --green-soft:rgba(0,161,154,.10); --green-mid:rgba(0,161,154,.18);
+    --red:#E17262; --red-soft:rgba(225,114,98,.14);
+    --ink:#1D1D1B; --title:#3C3C3B; --muted:#6b6b6b;
+    --line:#e2e2e0; --bg:#ffffff; --row:rgba(178,178,178,.08);
+    --amber:#c9821a; --amber-soft:#fdf3e2;
+  }
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       color:var(--ink);line-height:1.6;margin:0;background:#f4f5f5;}
+  .wrap{max-width:980px;margin:0 auto;background:var(--bg);padding:48px 56px;}
+  h1{font-size:30px;color:var(--title);margin:0 0 4px;font-weight:800;letter-spacing:-.5px}
+  h2{font-size:20px;color:#fff;background:var(--green);padding:8px 14px;border-radius:6px;margin:38px 0 16px;font-weight:700}
+  h3{font-size:16px;color:var(--title);margin:26px 0 8px;font-weight:700}
+  p{margin:10px 0}
+  a{color:var(--green)}
+  code{background:var(--green-soft);padding:1px 6px;border-radius:4px;font-family:"SFMono-Regular",Consolas,monospace;font-size:.88em}
+  .meta{color:var(--muted);font-size:13px;margin-bottom:6px}
+  .badge{display:inline-block;background:var(--amber-soft);color:var(--amber);border:1px solid #efcf9a;
+         border-radius:20px;padding:2px 12px;font-size:12px;font-weight:700}
+  .lead{font-size:16px;color:#333;border-left:4px solid var(--green);padding:6px 0 6px 16px;background:var(--green-soft);border-radius:0 6px 6px 0}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:var(--green-soft);color:var(--title);font-weight:700}
+  tr:nth-child(even) td{background:var(--row)}
+  .callout{border-radius:8px;padding:16px 18px;margin:18px 0}
+  .callout.manual{background:var(--amber-soft);border:1px solid #eecfa0}
+  .callout.warn{background:var(--red-soft);border:1px solid #eebfb7}
+  .callout.info{background:var(--green-soft);border:1px solid #b9e2df}
+  .callout h3{margin-top:0}
+  .todo{color:var(--amber);font-weight:700}
+  ol,ul{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  /* flow diagram */
+  .flow{display:flex;flex-direction:column;gap:8px;margin:18px 0}
+  .step{display:flex;align-items:flex-start;gap:12px;background:#fff;border:1px solid var(--line);border-left:4px solid var(--green);border-radius:6px;padding:10px 14px}
+  .step .n{flex:0 0 26px;height:26px;border-radius:50%;background:var(--green);color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;margin-top:1px}
+  .step.bot{border-left-color:var(--amber)} .step.bot .n{background:var(--amber)}
+  .step.ext{border-left-color:#7a7a7a} .step.ext .n{background:#7a7a7a}
+  .step .t{font-weight:700;color:var(--title)} .step .d{color:var(--muted);font-size:13.5px}
+  .arrow{color:var(--muted);text-align:center;font-size:14px;line-height:1}
+  .toc{background:var(--row);border:1px solid var(--line);border-radius:8px;padding:14px 20px;font-size:14px}
+  .toc a{text-decoration:none} .toc ol{columns:2;margin:6px 0}
+  .tag{font-family:monospace;font-size:12px;background:#eef0f0;border:1px solid var(--line);border-radius:4px;padding:1px 6px;color:#444}
+  hr{border:none;border-top:1px solid var(--line);margin:34px 0}
+  footer{color:var(--muted);font-size:12.5px;margin-top:30px}
+  @media print{body{background:#fff}.wrap{padding:0;max-width:none}h2{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="meta">Ecoceutics · Data / Airflow · Runbook operativo</div>
+  <h1>Proceso de Pedidos Alloga (EcoVital)</h1>
+  <p class="meta">
+    <span class="badge">BORRADOR — pendiente de validar</span>
+    &nbsp; Autor: Marc Eslava &nbsp;·&nbsp; Última actualización: 24/07/2026
+  </p>
+
+  <p class="lead">
+    Este documento describe, de principio a fin, cómo se procesan los pedidos de la tienda
+    online <strong>EcoVital</strong> hasta que llegan a <strong>Alloga</strong>, qué componentes
+    intervienen, cuándo se ejecuta cada parte y <strong>qué hacer cuando hay problemas</strong>.
+    El objetivo es que cualquier miembro del equipo pueda operar y desatascar el proceso sin
+    depender de una sola persona.
+  </p>
+
+  <div class="toc">
+    <strong>Contenido</strong>
+    <ol>
+      <li><a href="#resumen">Resumen del proceso</a></li>
+      <li><a href="#flujo">Diagrama del flujo</a></li>
+      <li><a href="#componentes">Componentes y programación</a></li>
+      <li><a href="#detalle">Paso a paso del pipeline</a></li>
+      <li><a href="#bot">El bot de Aqua BPI y Alloga</a></li>
+      <li><a href="#manual">Paso manual</a></li>
+      <li><a href="#problemas">Resolución de problemas</a></li>
+      <li><a href="#donde">Dónde mirar (accesos)</a></li>
+    </ol>
+  </div>
+
+  <!-- ─────────────────────────────────────── -->
+  <h2 id="resumen">1. Resumen del proceso</h2>
+  <p>
+    Un cliente hace un pedido en la tienda online <strong>EcoVital</strong> (plataforma
+    <strong>LogiCommerce</strong>). Cada día, un proceso automático (Airflow) recoge los pedidos
+    nuevos, los completa con los datos del cliente y de la farmacia, y genera un fichero por
+    pedido. Un <strong>bot (Aqua BPI)</strong> recoge esos ficheros y los introduce en
+    <strong>Alloga</strong> (el operador logístico que prepara y envía la mercancía). Por último,
+    el pedido se marca como <em>"en proceso"</em> en LogiCommerce.
+  </p>
+  <table>
+    <tr><th>Pieza</th><th>Rol</th></tr>
+    <tr><td><strong>LogiCommerce</strong></td><td>Tienda online EcoVital — origen de los pedidos y de los clientes.</td></tr>
+    <tr><td><strong>API Ecoceutics</strong></td><td>Aporta el FID del cliente a partir del NIF.</td></tr>
+    <tr><td><strong>BD fidfarma</strong> (vía túnel SSH)</td><td>Aporta el <em>código de cliente Alliance</em> (<code>id_unit_izaro</code>) de cada farmacia.</td></tr>
+    <tr><td><strong>Airflow</strong></td><td>Orquesta la extracción, el cruce de datos y la subida de ficheros al FTP.</td></tr>
+    <tr><td><strong>FTP de Aqua</strong></td><td>Buzón donde se dejan los ficheros de pedido (<code>Pedidos_AP_{nº}.csv</code>).</td></tr>
+    <tr><td><strong>Bot Aqua BPI</strong></td><td>Recoge los ficheros del FTP y los tramita hacia Alloga.</td></tr>
+    <tr><td><strong>Alloga</strong></td><td>Operador logístico — destino final del pedido.</td></tr>
+  </table>
+
+  <!-- ─────────────────────────────────────── -->
+  <h2 id="flujo">2. Diagrama del flujo</h2>
+  <div class="flow">
+    <div class="step ext"><div class="n">A</div><div><div class="t">Cliente hace pedido en EcoVital (LogiCommerce)</div><div class="d">Origen de los datos.</div></div></div>
+    <div class="arrow">▼</div>
+    <div class="step"><div class="n">B</div><div><div class="t">Airflow · <span class="tag">ecovital_etl</span> — cada día 11:30</div><div class="d">Extrae pedidos, los enriquece y arma la tabla final de pedidos.</div></div></div>
+    <div class="arrow">▼</div>
+    <div class="step"><div class="n">C</div><div><div class="t">Sube 1 CSV por pedido al FTP de Aqua</div><div class="d"><code>Pedidos_AP_{nº}.csv</code> — solo pedidos nuevos.</div></div></div>
+    <div class="arrow">▼</div>
+    <div class="step bot"><div class="n">D</div><div><div class="t">Se dispara el bot de Aqua BPI</div><div class="d">Recoge los ficheros del FTP y los tramita hacia Alloga.</div></div></div>
+    <div class="arrow">▼</div>
+    <div class="step ext"><div class="n">E</div><div><div class="t">Alloga procesa el pedido</div><div class="d">Prepara y envía la mercancía.</div></div></div>
+    <div class="arrow">▼</div>
+    <div class="step"><div class="n">F</div><div><div class="t">Se marca el pedido como "en proceso" en LogiCommerce</div><div class="d">Estado 2 (<code>in_process</code>).</div></div></div>
+  </div>
+
+  <!-- ─────────────────────────────────────── -->
+  <h2 id="componentes">3. Componentes y programación</h2>
+  <table>
+    <tr><th>DAG (Airflow)</th><th>Cuándo se ejecuta</th><th>Qué hace</th></tr>
+    <tr>
+      <td><code>ecovital_etl</code></td>
+      <td>Todos los días a las <strong>11:30</strong><br><span class="tag">30 11 * * *</span></td>
+      <td>Pipeline principal: extrae pedidos de EcoVital, los enriquece, sube los ficheros al FTP, dispara el bot y actualiza el estado en LogiCommerce.</td>
+    </tr>
+    <tr>
+      <td><code>push_alloga_etl</code></td>
+      <td><strong>Lun–Vie a las 10:30</strong><br><span class="tag">30 10 * * 1-5</span></td>
+      <td>Dispara el bot de Aqua BPI con otro identificador de proceso. <span class="todo">⚠️ A confirmar por Marc:</span> función exacta y relación con <code>ecovital_etl</code>.</td>
+    </tr>
+  </table>
+
+  <h3>Conexiones y variables que usa <code>ecovital_etl</code></h3>
+  <table>
+    <tr><th>Tipo</th><th>Nombre</th><th>Para qué</th></tr>
+    <tr><td>Conexión FTP</td><td><code>aqua_ftp</code></td><td>Buzón de ficheros de pedido para el bot.</td></tr>
+    <tr><td>Conexión SSH</td><td><code>ssh_tunnel</code></td><td>Túnel para llegar a la BD fidfarma.</td></tr>
+    <tr><td>Conexión BD</td><td><code>fidfarma_db</code></td><td>Tabla <code>Unit</code> → código Alliance por NIF.</td></tr>
+    <tr><td>API</td><td>LogiCommerce</td><td>Pedidos, usuarios y cambio de estado. Var.: <code>logicommerce_api_base</code>, <code>logicommerce_app_id</code>, <code>logicommerce_secret</code>.</td></tr>
+    <tr><td>API</td><td>Ecoceutics</td><td>FID del cliente por NIF. Var.: <code>ecoceutics_api_base</code>, <code>ecoceutics_api_key</code>.</td></tr>
+    <tr><td>Variable</td><td><code>ftp_remote_path</code></td><td>Carpeta destino en el FTP.</td></tr>
+    <tr><td>Variable</td><td><code>ecovital_tax_mapping</code></td><td>Mapeo de IDs de impuesto → % de IVA.</td></tr>
+    <tr><td>Variable</td><td><code>api_rate_limit_delay</code></td><td>Pausa entre llamadas a la API (evitar bloqueos).</td></tr>
+  </table>
+  <div class="callout info">
+    <strong>Nota de seguridad:</strong> las credenciales (secret de LogiCommerce, api_key de Ecoceutics,
+    usuario/clave del FTP y del bot) están en las <em>Connections/Variables de Airflow</em> y en el
+    DAG, no en este documento. Para cambiarlas, editar la conexión correspondiente en Airflow.
+  </div>
+
+  <!-- ─────────────────────────────────────── -->
+  <h2 id="detalle">4. Paso a paso del pipeline <code>ecovital_etl</code></h2>
+  <div class="flow">
+    <div class="step"><div class="n">1</div><div><div class="t">generate_token</div><div class="d">Genera el token de autenticación para la API de LogiCommerce.</div></div></div>
+    <div class="step"><div class="n">2</div><div><div class="t">extract_orders / extract_users</div><div class="d">Descarga todos los pedidos y todos los usuarios/clientes de LogiCommerce (paginado).</div></div></div>
+    <div class="step"><div class="n">3</div><div><div class="t">transform_orders → extract_order_details</div><div class="d">Obtiene los nº de pedido y, por cada uno, descarga el detalle: producto (SKU), unidades, precio, descuento, impuestos, RE y NIF.</div></div></div>
+    <div class="step"><div class="n">4</div><div><div class="t">extract_nif_data</div><div class="d">Por cada NIF, consulta la API de Ecoceutics para obtener el FID del cliente.</div></div></div>
+    <div class="step"><div class="n">5</div><div><div class="t">transform_users</div><div class="d">Normaliza las direcciones de facturación de los clientes.</div></div></div>
+    <div class="step"><div class="n">6</div><div><div class="t">alliance_clients</div><div class="d">Vía túnel SSH, consulta la BD fidfarma (tabla <code>Unit</code>, <code>bt_status=1</code>) para obtener el <strong>código de cliente Alliance</strong> de cada farmacia por NIF.</div></div></div>
+    <div class="step"><div class="n">7</div><div><div class="t">load_fact_table</div><div class="d">Cruza todo y construye la tabla final: <em>Nº Pedido, Código Farmacia, Código Producto, Unidades, Precio, Descuento, Fecha Pedido</em>.</div></div></div>
+    <div class="step"><div class="n">8</div><div><div class="t">cleanup_ftp</div><div class="d">Lee el FTP, calcula el <strong>nº de pedido máximo ya subido</strong> y borra los ficheros <code>Pedidos_AP_*.csv</code> antiguos.</div></div></div>
+    <div class="step"><div class="n">9</div><div><div class="t">upload_to_ftp</div><div class="d">Sube un CSV por pedido (<code>Pedidos_AP_{nº}.csv</code>), <strong>solo los pedidos nuevos</strong> (nº mayor que el máximo anterior).</div></div></div>
+    <div class="step bot"><div class="n">10</div><div><div class="t">execute_bot</div><div class="d">Dispara el bot de Aqua BPI, que recoge los ficheros y los tramita hacia Alloga.</div></div></div>
+    <div class="step"><div class="n">11</div><div><div class="t">change_state_logicommerce</div><div class="d">Marca cada pedido subido como <em>"en proceso"</em> (estado 2) en LogiCommerce.</div></div></div>
+  </div>
+  <div class="callout info">
+    <strong>Idea clave (anti-duplicados):</strong> el proceso solo sube pedidos con número
+    <em>mayor</em> que el máximo que ya estaba en el FTP. Por eso, si se borra o manipula el FTP
+    a mano, se puede alterar qué pedidos se consideran "nuevos".
+  </div>
+
+  <!-- ─────────────────────────────────────── -->
+  <h2 id="bot">5. El bot de Aqua BPI y la entrega a Alloga</h2>
+  <p>
+    El bot se lanza con una llamada al portal de Aqua BPI
+    (<code>…aquabpi.com/api/instance/execute</code>), indicando una instancia, una "skill" y un
+    identificador de proceso. En el flujo intervienen dos disparos distintos:
+  </p>
+  <table>
+    <tr><th>Disparo</th><th>Desde</th><th>Identificador de proceso</th><th>Función (a confirmar)</th></tr>
+    <tr><td>Bot EcoVital</td><td><code>ecovital_etl → execute_bot</code></td><td><span class="tag">f5456bfc…</span></td><td>Procesar los ficheros de pedido recién subidos.</td></tr>
+    <tr><td>Bot Alloga</td><td><code>push_alloga_etl</code></td><td><span class="tag">0d59a167…</span></td><td>Empuje/tramitación hacia Alloga.</td></tr>
+  </table>
+  <p class="todo">⚠️ Marc: confirmar qué hace exactamente cada uno de los dos disparos del bot y en qué orden dependen entre sí.</p>
+
+  <!-- ─────────────────────────────────────── -->
+  <h2 id="manual">6. Paso manual</h2>
+  <div class="callout manual">
+    <h3>⚙️ Paso manual — Ejecutar la query <code>update_pedidos</code> en Aqua</h3>
+    <p>
+      Dentro del proceso hay un paso que se realiza <strong>a mano</strong> en la aplicación de
+      escritorio <strong>Aqua</strong>: lanzar una consulta SQL (<code>update_pedidos</code>) con
+      una fecha concreta.
+    </p>
+    <ul>
+      <li><strong>Cuándo:</strong> cuando lo indique <strong>Silvia</strong> — ella facilita la <strong>fecha</strong> que hay que introducir.</li>
+      <li><strong>Herramienta:</strong> aplicación de escritorio <strong>Aqua</strong> (ventana <span class="tag">01-26 / Hygie31 España SLU</span>).</li>
+      <li><strong>Credenciales:</strong> usuario <code>jubach</code>. La contraseña está en el <strong>gestor de contraseñas del equipo</strong> (entrada «Login credentials»); no se escribe aquí por seguridad.</li>
+    </ul>
+    <h3 style="margin-bottom:4px">Pasos</h3>
+    <ol>
+      <li>Abrir <strong>Aqua</strong> e iniciar sesión con el usuario/contraseña indicados <span class="tag">captura 1</span>.</li>
+      <li>Ir a <strong>Menú → Instrucciones SQL</strong> <span class="tag">captura 2</span>.</li>
+      <li>Abrir y <strong>seleccionar la consulta <code>update_pedidos</code></strong> <span class="tag">captura 3</span>.</li>
+      <li>Introducir en la query la <strong>fecha que indique Silvia</strong>.</li>
+      <li>Con la query seleccionada, pulsar <strong>Ejecutar</strong>.</li>
+    </ol>
+    <p style="margin-bottom:0">
+      <strong>Cómo comprobar que salió bien:</strong> la verificación la realiza <strong>Silvia
+      desde su propio sistema</strong> — no la hace quien ejecuta la query.
+    </p>
+  </div>
+
+  <!-- ─────────────────────────────────────── -->
+  <h2 id="problemas">7. Resolución de problemas</h2>
+  <p>Síntomas frecuentes, dónde mirar y qué hacer. <span class="todo">Marc: revisar/añadir las acciones manuales reales.</span></p>
+  <table>
+    <tr><th>Síntoma</th><th>Causa probable</th><th>Dónde mirar / qué hacer</th></tr>
+    <tr>
+      <td>El pipeline no sube ningún pedido ("No new pedidos to upload")</td>
+      <td>No hay pedidos nuevos, o el nº máximo del FTP quedó por encima de lo esperado.</td>
+      <td>Revisar el FTP (<code>aqua_ftp</code>) y el log de <code>cleanup_ftp</code> (nº máximo detectado).</td>
+    </tr>
+    <tr>
+      <td>Un pedido concreto no llega a Alloga</td>
+      <td>No se generó/subió su fichero, o el bot no lo tramitó.</td>
+      <td>Comprobar que existe <code>Pedidos_AP_{nº}.csv</code> en el FTP; revisar log de <code>upload_to_ftp</code> y el portal de Aqua BPI.</td>
+    </tr>
+    <tr>
+      <td>Falta el <strong>Código Farmacia</strong> en el fichero</td>
+      <td>Túnel SSH caído, o el NIF no tiene equivalencia en la tabla <code>Unit</code> (<code>bt_status=1</code>).</td>
+      <td>Revisar log de <code>alliance_clients</code> ("SSH tunnel unavailable…" / "No matching units"). Verificar el túnel <code>ssh_tunnel</code> y la BD <code>fidfarma_db</code>.</td>
+    </tr>
+    <tr>
+      <td>En el log aparece <code>NIF … SKIP</code></td>
+      <td>La API de Ecoceutics devolvió error para ese NIF (cliente sin FID).</td>
+      <td>Es esperable para clientes sin ficha; si son muchos, revisar la API de Ecoceutics.</td>
+    </tr>
+    <tr>
+      <td><code>execute_bot</code> falla</td>
+      <td>El portal de Aqua BPI no responde, o cambiaron credenciales/IDs del bot.</td>
+      <td>Revisar el log de <code>execute_bot</code> y el estado del portal Aqua BPI (instancia <span class="tag">b71ccef7…</span>).</td>
+    </tr>
+    <tr>
+      <td><code>change_state_logicommerce</code> falla con <code>TLG014130</code></td>
+      <td>El pedido <em>ya</em> estaba "en proceso".</td>
+      <td><strong>No es un error real</strong> — el proceso lo ignora automáticamente.</td>
+    </tr>
+    <tr>
+      <td>LogiCommerce no autentica (401 / token)</td>
+      <td><code>logicommerce_secret</code> o <code>logicommerce_app_id</code> incorrectos/caducados.</td>
+      <td>Revisar las Variables de Airflow y regenerar credenciales en LogiCommerce si procede.</td>
+    </tr>
+    <tr>
+      <td>Pedidos duplicados en Alloga</td>
+      <td>Se re-subieron ficheros ya procesados (p. ej. tras tocar el FTP a mano).</td>
+      <td>Confirmar el nº máximo en el FTP antes de re-ejecutar; no borrar ficheros sin entender el efecto en el control anti-duplicados.</td>
+    </tr>
+    <tr>
+      <td>Los pedidos salen con una fecha incorrecta / Silvia pide corregir la fecha</td>
+      <td>Hay que forzar la fecha manualmente en origen.</td>
+      <td>Ejecutar la query <code>update_pedidos</code> en Aqua con la fecha que indique Silvia — ver <a href="#manual">§6 Paso manual</a>.</td>
+    </tr>
+  </table>
+
+  <!-- ─────────────────────────────────────── -->
+  <h2 id="donde">8. Dónde mirar (accesos)</h2>
+  <table>
+    <tr><th>Sistema</th><th>Para qué</th><th>Cómo llegar</th></tr>
+    <tr><td>Airflow (UI)</td><td>Estado de los DAGs, re-ejecutar tareas, leer logs.</td><td>DAGs <code>ecovital_etl</code> y <code>push_alloga_etl</code>. <span class="todo">(URL: pendiente)</span></td></tr>
+    <tr><td>Logs persistentes</td><td>Histórico de ejecuciones.</td><td>Carpeta <code>logs/</code> del proyecto (por DAG / tarea / fecha).</td></tr>
+    <tr><td>FTP de Aqua</td><td>Ver/gestionar los ficheros de pedido.</td><td>Conexión <code>aqua_ftp</code> en Airflow. <span class="todo">(host/usuario: pendiente)</span></td></tr>
+    <tr><td>Portal Aqua BPI</td><td>Ver ejecuciones del bot.</td><td><span class="tag">…bbos.services.aquabpi.com</span> · instancia <span class="tag">b71ccef7…</span> <span class="todo">(usuario: pendiente)</span></td></tr>
+    <tr><td>LogiCommerce (EcoVital)</td><td>Estado de los pedidos.</td><td>Panel de administración de la tienda. <span class="todo">(URL/usuario: pendiente)</span></td></tr>
+    <tr><td>Aplicación Aqua</td><td>Paso manual: query <code>update_pedidos</code>.</td><td>Escritorio, ventana <span class="tag">Hygie31 España SLU</span>. Usuario <code>jubach</code> (contraseña en el gestor de contraseñas). Ver <a href="#manual">§6</a>.</td></tr>
+  </table>
+
+  <hr>
+  <footer>
+    Documento de trabajo interno · Ecoceutics. Rellenar los apartados marcados en
+    <span class="todo">naranja</span> antes de publicar como versión final.
+  </footer>
+
+</div>
+</body>
+</html>

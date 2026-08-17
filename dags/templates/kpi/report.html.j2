@@ -1,0 +1,314 @@
+{#- KPI unified complete report. 1:1 port of kpi-unified-complete.blade.php -#}
+<!DOCTYPE html>
+<html lang="{{ locale }}">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        :root {
+            --text: #1D1D1B;
+            --row-bg: rgba(178, 178, 178, 0.10);
+            --green-bg: rgba(0, 161, 154, 1);
+            --green-bg-9: rgba(0, 161, 154, 0.09);
+            --green-bg-17: rgba(0, 161, 154, 0.17);
+            --red-bg: rgba(225, 114, 98, 1);
+            --red-bg-low: rgba(225, 114, 98, 0.17);
+            --red-fidelization-bg: rgba(247, 190, 192, 0.46);
+            --green-fidelization-bg: rgba(195, 222, 181, 0.46);
+            --title-bg: #3C3C3B;
+            --fine-line: #3C3C3B;
+            --thick-line: #3C3C3B;
+            --head-bg: rgba(60, 60, 59, 0.17);
+            --square-bg: rgba(178, 178, 178, 0.10);
+            --pure-white: rgba(255, 255, 255, 1);
+        }
+
+        @font-face { font-family: 'Montserrat'; font-weight: 400; src: url("{{ font_dir }}/Montserrat-Regular.ttf") format('truetype'); }
+        @font-face { font-family: 'Montserrat'; font-weight: 500; src: url("{{ font_dir }}/Montserrat-Medium.ttf") format('truetype'); }
+        @font-face { font-family: 'Montserrat'; font-weight: 700; src: url("{{ font_dir }}/Montserrat-Bold.ttf") format('truetype'); }
+        @font-face { font-family: 'Montserrat'; font-weight: 900; src: url("{{ font_dir }}/Montserrat-ExtraBold.ttf") format('truetype'); }
+
+        body { font-family: 'Montserrat'; font-size: 12px; margin-left: 8px; margin-right: 8px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 3px; }
+        th, td { border: 1px solid #333; padding: 4px; text-align: left; }
+        th:nth-child(1), td:nth-child(1) { width: 30%; }
+        th:nth-child(2), td:nth-child(2),
+        th:nth-child(3), td:nth-child(3),
+        th:nth-child(4), td:nth-child(4) { width: 23.33%; text-align: right; padding-right: 14px; font-variant-numeric: tabular-nums; }
+        h2 { font-family: 'Montserrat'; font-weight: 900; font-size: 13px; color: white; padding: 6px; margin: 0; }
+        .h2-green { background-color: var(--green-bg); }
+        .h2-red { background-color: var(--red-bg); }
+        .no-border-table, .no-border-table td { border: none !important; }
+        .page-break { page-break-after: always; }
+        @page { margin-bottom: 60px; }
+        .page-footer { position: fixed; bottom: -40px; left: 0; right: 0; text-align: center; font-family: 'Montserrat'; font-size: 10px; color: var(--title-bg); }
+        .page-footer .page-number:after { content: counter(page); }
+        .cover-page { text-align: center; padding-top: 200px; }
+        .cover-logo { margin-bottom: 60px; }
+        .cover-text { font-family: 'Montserrat'; font-size: 12px; color: var(--text); margin: 0 auto; max-width: 80%; line-height: 1.6; text-align: justify; }
+    </style>
+</head>
+<body>
+    <div class="page-footer">
+        <span class="page-number">{{ 'Pàgina ' if locale == 'ca' else 'Página ' }}</span>
+    </div>
+
+    {#- ==================== PORTADA ==================== -#}
+    <div class="cover-page">
+        <div class="cover-logo">
+            <img src="{{ logo }}" alt="Logo" style="width: 250px;">
+        </div>
+        <div class="cover-text"><p>{{ nombreFarmacia }}</p></div>
+    </div>
+    <div class="page-break"></div>
+
+    {#- ==================== SECCIÓN 1: VENTAS Y COMPRAS ==================== -#}
+    {% for pageKey, fecha in [('actual', mesAno), ('acumulado', mesRango)] %}
+        {% set kpisBlock1 = ventasCompras[pageKey]['kpisBlock1'] %}
+        {% set kpisBlock2 = ventasCompras[pageKey]['kpisBlock2'] %}
+        {% set kpisBlock3 = ventasCompras[pageKey]['kpisBlock3'] %}
+        {% set purchases = ventasCompras[pageKey]['purchases'] %}
+
+        <header>
+            <table class="no-border-table" style="width: 100%; margin-bottom: 10px;">
+                <tr>
+                    <td style="width: 22%;"><img src="{{ logo }}" alt="Logo" style="width: 150px;"></td>
+                    <td style="vertical-align: top;">
+                        <span style="font-family: 'Montserrat'; font-weight: 700; color: var(--title-bg); font-size: 17px;">
+                            {{ 'VENDES I COMPRES' if locale == 'ca' else 'VENTAS Y COMPRAS' }}
+                        </span><br>
+                        <span style="font-family: 'Montserrat'; font-weight: 500; color: var(--title-bg); font-size: 17px;">{{ fecha }}</span>
+                    </td>
+                </tr>
+            </table>
+        </header>
+
+        {% if locale == 'ca' %}
+            {% set kpiTitles = [('VENDES', kpisBlock1), ('VENDES | EFG*', kpisBlock2), ('VENDES | MARCA EXCLUSIVA (MEX)', kpisBlock3)] %}
+        {% else %}
+            {% set kpiTitles = [('VENTAS', kpisBlock1), ('VENTAS | EFG*', kpisBlock2), ('VENTAS | MARCA EXCLUSIVA (MEX)', kpisBlock3)] %}
+        {% endif %}
+        {% if locale == 'ca' %}
+            {% set headings = ['Indicador', 'Variació (%) Act. vs Ant.', 'Variació (€) Act. vs Ant.', 'Valor (€) Període Actual'] %}
+        {% else %}
+            {% set headings = ['Indicador', 'Variación (%) Act. vs Ant.', 'Variación (€) Act. vs Ant.', 'Valor (€) Período Actual'] %}
+        {% endif %}
+
+        {% for title, block in kpiTitles %}
+            <h2 class="h2-green">{{ title }}</h2>
+            <table style="margin-bottom: 22px">
+                <thead>
+                    <tr style="font-family: 'Montserrat'; font-weight: 700; font-size: 10px; color: var(--text);">
+                        {% for heading in headings %}
+                            <th style="background-color: var(--green-bg-9); padding: 8px;">{{ heading }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set ns = namespace(prev=None) %}
+                    {% for row in block %}
+                        {% set label = (row.Indicador or '') | trim %}
+                        {% set isTotal = label in ['SO Total (1+2)', 'SO Paraf. Total (A+B+C)', 'SO EFGs-Total'] %}
+                        {% set borderTop = 'border-top: 2px solid var(--thick-line);' if ns.prev in ['SO Total (1+2)', 'SO Paraf. Total (A+B+C)'] else '' %}
+                        {% set rowBg = 'var(--green-bg-9)' if isTotal else ('var(--pure-white)' if loop.index0 % 2 == 0 else 'var(--row-bg)') %}
+                        {% set valueBg = 'var(--green-fidelization-bg)' if row.VariacionAbsoluta > 0 else ('var(--red-fidelization-bg)' if row.VariacionAbsoluta < 0 else 'transparent') %}
+                        <tr style="background-color: {{ rowBg }}; {{ borderTop }}">
+                            <td>{{ row.Indicador }}</td>
+                            <td>{{ row.VariacionPorcentaje | number_format(1) }} %</td>
+                            <td style="background-color: {{ valueBg }};">{{ row.VariacionAbsoluta | number_format(2) }} €</td>
+                            <td>{{ row.ValorAct | number_format(2) }} €</td>
+                        </tr>
+                        {% set ns.prev = label %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% endfor %}
+
+        <h2 class="h2-green">{{ 'COM COMPRO?' if locale == 'ca' else '¿CÓMO COMPRO?' }}</h2>
+        <table>
+            {% if locale == 'ca' %}
+                {% set pheadings = ['Proveïdor Unificat', 'Import Compra (€)', '% s/ Total'] %}
+            {% else %}
+                {% set pheadings = ['Proveedor Unificado', 'Importe Compra (€)', '% s/ Total'] %}
+            {% endif %}
+            <thead>
+                <tr style="font-family: 'Montserrat'; font-weight: 700; font-size: 10px; color: var(--text);">
+                    {% for heading in pheadings %}
+                        <th style="background-color: var(--green-bg-9); padding: 8px;">{{ heading }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% set pns = namespace(totalImporte=0, totalPorcentaje=0) %}
+                {% for row in purchases %}
+                    {% set pns.totalImporte = pns.totalImporte + row.ImporteCompra %}
+                    {% set pns.totalPorcentaje = pns.totalPorcentaje + row.PorcentajeTotal %}
+                    <tr style="background-color: {{ 'var(--pure-white)' if loop.index0 % 2 == 0 else 'var(--row-bg)' }};">
+                        <td>{{ row.ProveedorUnificado }}</td>
+                        <td>{{ row.ImporteCompra | number_format(2) }} €</td>
+                        <td>{{ row.PorcentajeTotal | number_format(1) }} %</td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="3">No hay datos de compras.</td></tr>
+                {% endfor %}
+                <tr style="background-color: var(--green-bg-9);">
+                    <td>Total</td>
+                    <td>{{ pns.totalImporte | number_format(1) }} €</td>
+                    <td>{{ pns.totalPorcentaje | number_format(1) }} %</td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="page-break"></div>
+    {% endfor %}
+
+    {#- ==================== SECCIÓN 2: RETAIL + FIDELIZACIÓN ==================== -#}
+    {% set retailLabel = 'INDICADORS RETAIL' if locale == 'ca' else 'INDICADORES RETAIL' %}
+    {% for key in ['actual', 'acumulado'] %}
+        <header>
+            <table class="no-border-table" style="width: 100%; margin-bottom: 10px;">
+                <tr>
+                    <td style="width: 22%;"><img src="{{ logo }}" alt="Logo" style="width: 150px;"></td>
+                    <td style="vertical-align: top;">
+                        <span style="font-family: 'Montserrat'; font-weight: 700; color: var(--title-bg); font-size: 17px;">{{ retailLabel }}</span><br>
+                        <span style="font-family: 'Montserrat'; font-weight: 500; color: var(--title-bg); font-size: 17px;">{{ mesRango if key == 'acumulado' else mesAno }}</span>
+                    </td>
+                </tr>
+            </table>
+        </header>
+
+        <h2 class="h2-red">{{ retailLabel }}</h2>
+        <table style="margin-bottom: 22px">
+            {% if locale == 'ca' %}
+                {% set rheadings = ['Indicador', 'Variació (%) Act. vs Ant.', 'Variació Act. vs Ant.', 'Valor'] %}
+            {% else %}
+                {% set rheadings = ['Indicador', 'Variación (%) Act. vs Ant.', 'Variación Act. vs Ant.', 'Valor'] %}
+            {% endif %}
+            <thead>
+                <tr style="font-family: 'Montserrat'; font-weight: 700; font-size: 10px; color: var(--text);">
+                    {% for heading in rheadings %}
+                        <th style="background-color: var(--red-bg-low); padding: 8px;">{{ heading }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in retail[key] %}
+                    {% set cellBg = 'var(--green-fidelization-bg)' if row.VariacionAbsoluta > 0 else ('var(--red-fidelization-bg)' if row.VariacionAbsoluta < 0 else 'transparent') %}
+                    <tr style="background-color: {{ 'var(--pure-white)' if loop.index0 % 2 == 0 else 'var(--row-bg)' }};">
+                        <td>{{ row.Indicador }}</td>
+                        <td>{{ row.VariacionPorcentaje | number_format(1) }} %</td>
+                        <td style="background-color: {{ cellBg }};">{{ row.VariacionAbsFormatted }}</td>
+                        <td>{{ row.ValorFormatted }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <h2 class="h2-red">{{ 'INDICADORS FIDELITZACIÓ' if locale == 'ca' else 'INDICADORES FIDELIZACIÓN' }}</h2>
+        <table style="margin-bottom: 22px">
+            <thead>
+                <tr style="font-family: 'Montserrat'; font-weight: 700; font-size: 10px; color: var(--text);">
+                    <th style="background-color: var(--red-bg-low); padding: 8px;">Indicador</th>
+                    <th style="background-color: var(--red-bg-low); padding: 8px;">Mes Actual</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in fidelizacion[key] %}
+                    <tr style="background-color: {{ 'var(--pure-white)' if loop.index0 % 2 == 0 else 'var(--row-bg)' }};">
+                        <td>{{ row.Indicador }}</td>
+                        <td style="text-align: right; padding-right: 14px;">{{ row.MesActual }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div class="page-break"></div>
+    {% endfor %}
+
+    {#- ==================== SECCIÓN 3: RANKING SUPERFAMILIAS ==================== -#}
+    {% set superfamiliaLabel = 'SUPERFAMÍLIES' if locale == 'ca' else 'SUPERFAMILIAS' %}
+    {% for key, fecha in [('actual', mesAno), ('acumulado', mesRango)] %}
+        <header>
+            <table class="no-border-table" style="width: 100%; margin-bottom: 10px;">
+                <tr>
+                    <td style="width: 22%;"><img src="{{ logo }}" alt="Logo" style="width: 150px;"></td>
+                    <td style="vertical-align: top;">
+                        <span style="font-family: 'Montserrat'; font-weight: 700; color: var(--title-bg); font-size: 17px;">
+                            {{ 'RÀNQUING x SUPERFAMÍLIES' if locale == 'ca' else 'RANKING x SUPERFAMILIAS' }}
+                        </span><br>
+                        <span style="font-family: 'Montserrat'; font-weight: 500; color: var(--title-bg); font-size: 17px;">{{ fecha }}</span>
+                    </td>
+                </tr>
+            </table>
+        </header>
+
+        <h2 class="h2-red">{{ superfamiliaLabel }}</h2>
+        <table style="margin-bottom: 22px">
+            {% if locale == 'ca' %}
+                {% set sheadings = ['Superfamília', 'Variació (%)', 'Variació (€)', 'Participació %'] %}
+            {% else %}
+                {% set sheadings = ['Superfamilia', 'Variación (%)', 'Variación (€)', 'Participación %'] %}
+            {% endif %}
+            <thead>
+                <tr style="font-family: 'Montserrat'; font-weight: 700; font-size: 10px; color: var(--text);">
+                    {% for heading in sheadings %}
+                        <th style="background-color: var(--red-bg-low); padding: 8px;">{{ heading }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in familias[key] %}
+                    {% set valueBg = 'var(--green-fidelization-bg)' if item.VarValor > 0 else ('var(--red-fidelization-bg)' if item.VarValor < 0 else 'transparent') %}
+                    <tr style="background-color: {{ 'var(--pure-white)' if loop.index0 % 2 == 0 else 'var(--row-bg)' }};">
+                        <td>{{ item.SuperFamilia }}</td>
+                        <td style="text-align: right; padding-right: 14px;">{{ item.PctVarValor | number_format(1) }} %</td>
+                        <td style="background-color: {{ valueBg }}; text-align: right; padding-right: 14px;">{{ item.VarValor | number_format(2) }} €</td>
+                        <td style="text-align: right; padding-right: 14px;">{{ item.PorcentajeSobreTotal | number_format(1) }} %</td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="4">No hay datos.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div class="page-break"></div>
+    {% endfor %}
+
+    {#- ==================== SECCIÓN 4: STOCK ==================== -#}
+    <header>
+        <table class="no-border-table" style="width: 100%; margin-bottom: 10px;">
+            <tr>
+                <td style="width: 22%;"><img src="{{ logo }}" alt="Logo" style="width: 150px;"></td>
+                <td style="vertical-align: top;">
+                    <span style="font-family: 'Montserrat'; font-weight: 700; color: var(--title-bg); font-size: 17px;">STOCK</span><br>
+                    <span style="font-family: 'Montserrat'; font-weight: 500; color: var(--title-bg); font-size: 17px;">{{ mesAno }}</span>
+                </td>
+            </tr>
+        </table>
+    </header>
+
+    <h2 class="h2-green">STOCK</h2>
+    <table>
+        {% if locale == 'ca' %}
+            {% set stheadings = ['Indicador', 'Valor a PVP Període Actual', 'Valor (%)'] %}
+        {% else %}
+            {% set stheadings = ['Indicador', 'Valor a PVP Período Actual', 'Valor (%)'] %}
+        {% endif %}
+        <thead>
+            <tr style="font-family: 'Montserrat'; font-weight: 700; font-size: 10px; color: var(--text);">
+                {% for heading in stheadings %}
+                    <th style="background-color: var(--green-bg-9); padding: 8px;">{{ heading }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in stockIndicators %}
+                {% set valueBg = 'var(--green-fidelization-bg)' if item.Porcentaje > 0 else ('var(--red-fidelization-bg)' if item.Porcentaje < 0 else 'transparent') %}
+                <tr style="background-color: {{ 'var(--pure-white)' if loop.index0 % 2 == 0 else 'var(--row-bg)' }};">
+                    <td>{{ item.Indicador }}</td>
+                    <td style="text-align: right; padding-right: 14px;">{{ item.ValorPVPFormatted }}</td>
+                    <td style="background-color: {{ valueBg }}; text-align: right; padding-right: 14px;">{{ item.Porcentaje | number_format(1) }} %</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="3">No hay datos disponibles de stock.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

@@ -1,0 +1,39 @@
+{#- Report email body. Port of emails/test/test.blade.php -#}
+{% set text = {
+    'es': {
+        'greeting': 'Hola,',
+        'intro': 'Adjuntamos los informes correspondientes al mes en curso <strong>' ~ mesAno ~ '</strong> así como del acumulado anual <strong>' ~ mesRango ~ '</strong> de <strong>' ~ nombreFarmacia ~ '</strong>, donde podrás consultar la siguiente información:',
+        'items': ['Ventas y Compras', 'Ranking de Familias', 'Indicadores Retail', 'Stocks'],
+        'footer': 'Para ampliar la información, puedes acceder a tu entorno de Business Intelligence en:',
+        'noreply': 'Por favor, no respondas a este correo, ya que no está habilitado para recibir respuestas.',
+        'thanks': 'Gracias,',
+        'bye': 'Un saludo.'
+    },
+    'ca': {
+        'greeting': 'Hola,',
+        'intro': "Adjuntem els informes corresponents al mes en curs <strong>" ~ mesAno ~ "</strong> així com de l'any acumulat <strong>" ~ mesRango ~ "</strong> de <strong>" ~ nombreFarmacia ~ "</strong>, on podràs consultar la següent informació:",
+        'items': ['Vendes i Compres', 'Rànquing de Famílies', 'Indicadors Retail', 'Estocs'],
+        'footer': "Per a ampliar la informació, pots accedir al teu entorn de Business Intelligence a:",
+        'noreply': 'Si us plau, no responguis a aquest correu, ja que no es troba habilitat per a rebre respostes.',
+        'thanks': 'Gràcies,',
+        'bye': 'Una salutació.'
+    }
+} %}
+{% set t = text.get(locale, text['es']) %}
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Informe de KPIs</title></head>
+<body style="font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; padding: 20px;">
+    <div style="margin-bottom: 20px;">
+        <img src="{{ logo }}" alt="Ecoceutics" height="80" style="display: block;">
+    </div>
+    <p>{{ t['greeting'] }}</p>
+    <p>{{ t['intro'] | safe }}</p>
+    <ul>
+        {% for item in t['items'] %}<li>{{ item }}</li>{% endfor %}
+    </ul>
+    <p>{{ t['footer'] }} <a href="https://bifarmaeco.com/">bifarmaeco</a></p>
+    <p style="color: #888; font-size: 0.95em;">{{ t['noreply'] }}</p>
+    <p>{{ t['thanks'] }}<br>{{ t['bye'] }}</p>
+</body>
+</html>
