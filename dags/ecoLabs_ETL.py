@@ -46,8 +46,8 @@ OUTPUT_DIR     = Variable.get("ecolabs_output_dir", default_var="/opt/airflow/do
 BOOKS = [1, 2, 3, 4]
 
 # 'tipo de iva' is derived from the IVA % via this map (legacy sample: IVA 4 → 1).
-# Products whose IVA % is not a key here (or is blank) get a BLANK 'tipo de iva'
-# and are listed in a warning at the end of the run so they can be fixed in Zoho.
+# Products whose IVA % is not a key here (or is blank) are DROPPED from the files
+# entirely and listed in a warning at the end of the run so they can be fixed in Zoho.
 IVA_TIPO_MAP = {0: 0, 4: 1, 10: 2, 21: 3}
 CANTIDAD_DEFAULT = 1
 
@@ -316,15 +316,30 @@ def ecolabs_etl():
         def nom_lab(v):
             return shortnames.get(_lab_id(v)) or _lab_name(v)
 
-        # 'tipo de iva' from the IVA % via IVA_TIPO_MAP. Normalize the raw IVA
-        # (strip '%', comma decimals, round) for the lookup; the output IVA column
-        # itself stays the raw passthrough. Unmapped/blank IVA → <NA> (blank + flagged).
-        iva_norm = pd.to_numeric(
-            col(FIELD["IVA"]).astype(str).str.strip()
-               .str.replace("%", "", regex=False).str.replace(",", ".", regex=False),
-            errors="coerce",
-        ).round()
-        tipo_iva = iva_norm.map(IVA_TIPO_MAP).astype("Int64")
+        # 'tipo de iva' from the IVA % via IVA_TIPO_MAP. Normalize the raw IVA (any format:
+        # int/float/str, comma or dot decimals) onto a valid group {0,4,10,21}:
+        #   • integers / >=1: used as-is (4, 10, 21; 16/22… → no group → dropped).
+        #   • fractions <1 ("tanto por uno"): scaled onto a group — 0.04→4, 0.10→10,
+        #     0.21→21, and 0.4→4 (single-decimal shorthand for 4%, per business rule).
+        #   • anything that doesn't land on a group (0.2→20, 0.5, 16…) or blank → <NA>.
+        # The output IVA column stays the raw passthrough; <NA> tipo → product dropped + flagged.
+        _valid_nonzero = {g for g in IVA_TIPO_MAP if g != 0}
+
+        def _iva_to_group(raw):
+            v = pd.to_numeric(str(raw).strip().replace("%", "").replace(",", "."), errors="coerce")
+            if pd.isna(v):
+                return pd.NA
+            if 0 < v < 1:                                   # tanto por uno → find the scale that hits a group
+                for scale in (10, 100):
+                    c = round(v * scale)
+                    if c in _valid_nonzero and abs(v * scale - c) <= 0.5:
+                        return int(c)
+                return pd.NA
+            c = int(round(v))
+            return c if c in IVA_TIPO_MAP else pd.NA
+
+        iva_norm = col(FIELD["IVA"]).map(_iva_to_group)
+        tipo_iva = iva_norm.map(lambda g: IVA_TIPO_MAP.get(g) if pd.notna(g) else pd.NA).astype("Int64")
 
         # Base columns shared by every book (constant + product-level fields).
         base = pd.DataFrame({
@@ -340,7 +355,7 @@ def ecolabs_etl():
         })
 
         summary = []
-        unmapped_iva = {}   # CN → (lab, desc, raw IVA) for shipped rows with no tipo de iva
+        unmapped_iva = {}   # CN → (lab, desc, raw IVA) for products dropped (IVA not in a group)
         excluded_labs = {_safe(x) for x in EXCLUDED_LABS}
         remote_dir = FTP_REMOTE_DIR.rstrip("/")
         with contextlib.ExitStack() as stack:
@@ -383,9 +398,17 @@ def ecolabs_etl():
                 disc = disc.mask((disc > 0) & (disc <= 1), disc * 100).round()
                 book["DESC BOOK"] = disc.astype("Int64")
 
-                # Keep only products that participate in this book (has a discount value).
-                participates = book["DESC BOOK"].notna()
-                book = book[participates & book["NOM LAB"].astype(str).str.strip().ne("")]
+                # Products participate in this book when they have a discount value AND a lab.
+                participates = book["DESC BOOK"].notna() & book["NOM LAB"].astype(str).str.strip().ne("")
+
+                # IVA rule: a product whose IVA % doesn't map to a group (tipo de iva = <NA>)
+                # is DROPPED from the files entirely (and flagged), not shipped blank.
+                would_ship = book[participates]
+                dropped = would_ship[would_ship["tipo de iva"].isna()]
+                for _, r in dropped.iterrows():
+                    unmapped_iva[str(r["CN"])] = (r["NOM LAB"], r["DESC"], r["IVA"])
+
+                book = book[participates & book["tipo de iva"].notna()]
                 if book.empty:
                     print(f"[B{n}] no participating products")
                     continue
@@ -397,10 +420,6 @@ def ecolabs_etl():
                         print(f"[B{n}] {lab}: excluded — skipping")
                         continue
                     g = grp[OUT_COLUMNS]
-                    # Flag shipped products whose IVA % didn't map to a tipo de iva.
-                    miss = g["tipo de iva"].isna()
-                    for i in g.index[miss]:
-                        unmapped_iva[str(g.at[i, "CN"])] = (lab, g.at[i, "DESC"], g.at[i, "IVA"])
                     if is_efg:
                         fname = f"{FILE_PREFIX}_B{n}_{safe_lab}_EFG.csv"   # ECO_B1_CINFA_EFG.csv
                     else:
@@ -413,8 +432,8 @@ def ecolabs_etl():
                     summary.append({"book": n, "lab": lab, "efg": bool(is_efg), "rows": len(g), "file": dest})
 
         if unmapped_iva:
-            print(f"⚠️ {len(unmapped_iva)} shipped product(s) with unmapped/blank IVA — "
-                  f"'tipo de iva' left blank (fix IVA in Zoho; valid: {sorted(IVA_TIPO_MAP)}):")
+            print(f"⚠️ {len(unmapped_iva)} product(s) DROPPED — IVA % not in any group "
+                  f"(fix IVA in Zoho; valid: {sorted(IVA_TIPO_MAP)}):")
             for cnk, (lab, desc, iva) in unmapped_iva.items():
                 print(f"    - [{lab}] CN {cnk} {desc}  (IVA: {iva!r})")
 

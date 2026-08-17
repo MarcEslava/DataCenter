@@ -351,5 +351,4 @@ def price_monitor_etl():
     detection = detect_changes(crawled)   # alerting (snapshot diff)
     notify(detection)
 
-
 price_monitor_etl()
