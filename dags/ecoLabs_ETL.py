@@ -45,8 +45,10 @@ OUTPUT_DIR     = Variable.get("ecolabs_output_dir", default_var="/opt/airflow/do
 # Book 4 is a duplicate of Book 3 (same data, filename B4) — see BOOK_DTO_FIELD.
 BOOKS = [1, 2, 3, 4]
 
-# Constant output columns (no per-product source field in the sample).
-TIPO_IVA_DEFAULT = 1
+# 'tipo de iva' is derived from the IVA % via this map (legacy sample: IVA 4 → 1).
+# Products whose IVA % is not a key here (or is blank) get a BLANK 'tipo de iva'
+# and are listed in a warning at the end of the run so they can be fixed in Zoho.
+IVA_TIPO_MAP = {0: 0, 4: 1, 10: 2, 21: 3}
 CANTIDAD_DEFAULT = 1
 
 # ── Zoho Products field → output meaning ─────────────────────────────────────
@@ -81,6 +83,10 @@ BOOK_DTO_FIELD = {
     2: "Dto_Book_2",
     3: "Dto_Book_3",
 }
+
+# DIAGNOSTIC: set to a Product_Code (CN) to dump that product's raw Zoho fields
+# to the log (handy for verifying API field names). Leave "" in normal runs.
+DEBUG_DUMP_CN = ""
 
 # Output header, in order — must match the legacy file exactly.
 OUT_COLUMNS = ["CN", "EAN", "DESC", "PVL", "IVA", "tipo de iva", "cantidad", "DESC BOOK", "NOM LAB"]
@@ -262,6 +268,20 @@ def ecolabs_etl():
                 return df[name]
             return pd.Series([""] * len(df), index=df.index)
 
+        # ── TEMP DIAGNOSTIC: dump one product's raw Zoho fields to find the real
+        #    API name of the "Dto. Book" discount fields. Remove once resolved. ──
+        if DEBUG_DUMP_CN:
+            code_col = FIELD["CN"]
+            hit = df[df.get(code_col, pd.Series([""] * len(df), index=df.index))
+                       .astype(str).str.strip() == str(DEBUG_DUMP_CN)]
+            if hit.empty:
+                print(f"[DEBUG] CN {DEBUG_DUMP_CN} not found among {len(df)} products "
+                      f"(matched on '{code_col}')")
+            for i, rec in hit.iterrows():
+                print(f"[DEBUG] raw Zoho fields for CN {DEBUG_DUMP_CN}:")
+                for k, v in rec.items():
+                    print(f"    {k} = {v!r}")
+
         # CN (first column) = the 6-digit código nacional. A Zoho Product_Code that is really
         # a 13-digit EAN (anything longer than 7 digits) is NOT a CN — resolve those, and any
         # missing one, from BIFarma by matching the EAN. Still-unresolved → blank + printed.
@@ -296,6 +316,16 @@ def ecolabs_etl():
         def nom_lab(v):
             return shortnames.get(_lab_id(v)) or _lab_name(v)
 
+        # 'tipo de iva' from the IVA % via IVA_TIPO_MAP. Normalize the raw IVA
+        # (strip '%', comma decimals, round) for the lookup; the output IVA column
+        # itself stays the raw passthrough. Unmapped/blank IVA → <NA> (blank + flagged).
+        iva_norm = pd.to_numeric(
+            col(FIELD["IVA"]).astype(str).str.strip()
+               .str.replace("%", "", regex=False).str.replace(",", ".", regex=False),
+            errors="coerce",
+        ).round()
+        tipo_iva = iva_norm.map(IVA_TIPO_MAP).astype("Int64")
+
         # Base columns shared by every book (constant + product-level fields).
         base = pd.DataFrame({
             "CN":          cn,
@@ -303,13 +333,14 @@ def ecolabs_etl():
             "DESC":        col(FIELD["DESC"]),
             "PVL":         pd.to_numeric(col(FIELD["PVL"]), errors="coerce"),
             "IVA":         col(FIELD["IVA"]),
-            "tipo de iva": TIPO_IVA_DEFAULT,
+            "tipo de iva": tipo_iva,
             "cantidad":    CANTIDAD_DEFAULT,
             "NOM LAB":     col(FIELD["LAB"]).map(nom_lab),
             "_EFG":        col(FIELD["LAB"]).map(lambda v: _lab_id(v) in efg_ids),
         })
 
         summary = []
+        unmapped_iva = {}   # CN → (lab, desc, raw IVA) for shipped rows with no tipo de iva
         excluded_labs = {_safe(x) for x in EXCLUDED_LABS}
         remote_dir = FTP_REMOTE_DIR.rstrip("/")
         with contextlib.ExitStack() as stack:
@@ -366,6 +397,10 @@ def ecolabs_etl():
                         print(f"[B{n}] {lab}: excluded — skipping")
                         continue
                     g = grp[OUT_COLUMNS]
+                    # Flag shipped products whose IVA % didn't map to a tipo de iva.
+                    miss = g["tipo de iva"].isna()
+                    for i in g.index[miss]:
+                        unmapped_iva[str(g.at[i, "CN"])] = (lab, g.at[i, "DESC"], g.at[i, "IVA"])
                     if is_efg:
                         fname = f"{FILE_PREFIX}_B{n}_{safe_lab}_EFG.csv"   # ECO_B1_CINFA_EFG.csv
                     else:
@@ -376,6 +411,12 @@ def ecolabs_etl():
                     dest = emit(fname, content)
                     print(f"[B{n}] {lab}{' EFG' if is_efg else ''}: {len(g)} rows -> {dest}")
                     summary.append({"book": n, "lab": lab, "efg": bool(is_efg), "rows": len(g), "file": dest})
+
+        if unmapped_iva:
+            print(f"⚠️ {len(unmapped_iva)} shipped product(s) with unmapped/blank IVA — "
+                  f"'tipo de iva' left blank (fix IVA in Zoho; valid: {sorted(IVA_TIPO_MAP)}):")
+            for cnk, (lab, desc, iva) in unmapped_iva.items():
+                print(f"    - [{lab}] CN {cnk} {desc}  (IVA: {iva!r})")
 
         print(f"Done — {'uploaded' if ENABLE_FTP_UPLOAD else 'wrote'} {len(summary)} book/lab file(s)")
         return summary
