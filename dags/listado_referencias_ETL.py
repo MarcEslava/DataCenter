@@ -156,6 +156,7 @@ def _fetch_all(module: str):
 
 @dag(
     dag_id="listado_referencias_ETL",
+    tags=["zoho", "powerbi", "maestros"],
     description="Excel 'Listado Acuerdos' for Power BI, from Zoho Products (prototype)",
     schedule=Variable.get("listado_referencias_schedule", default_var="0 5 1 * *"),  # 05:00 on the 1st
     start_date=datetime(2024, 1, 1),

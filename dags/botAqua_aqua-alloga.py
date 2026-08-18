@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 @dag(
     dag_id='push_alloga_etl',
+    tags=["aqua", "bot", "alloga", "orders"],
     description='EcoVital Orders ETL Pipeline',
     schedule=Variable.get("push_alloga_schedule", default_var="30 10 * * 1-5"),
     start_date=datetime(2026, 1, 1),

@@ -142,6 +142,7 @@ def _lab_id(value) -> str:
 
 @dag(
     dag_id="ecoLabs_ETL",
+    tags=["ecolabs", "zoho", "ftp"],
     description="Per-book/per-lab product files from Zoho CRM Products (prototype)",
     schedule=Variable.get("ecolabs_schedule", default_var="0 4 1 * *"),  # 04:00 on the 1st
     start_date=datetime(2024, 1, 1),

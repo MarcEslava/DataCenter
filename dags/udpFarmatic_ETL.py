@@ -34,6 +34,7 @@ HTTP_TIMEOUT = int(Variable.get("ecoupdate_http_timeout", default_var="120"))
 
 @dag(
     dag_id="udpFarmatic_ETL",
+    tags=["farmatic", "update", "api"],
     description="Trigger ecoextract update API (upd_varios + upd_parametro) per pharmacy",
     schedule=Variable.get("udpfarmatic_schedule", default_var="0 6 * * *"),  # daily 06:00
     start_date=datetime(2024, 1, 1),

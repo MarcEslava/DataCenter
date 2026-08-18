@@ -23,6 +23,7 @@ dag = DAG(
     "powerbi_etl",
     default_args={"owner": "data-team", "retries": 1, "retry_delay": timedelta(minutes=5)},
     schedule=Variable.get("powerbi_etl_schedule", default_var="0 6 * * *"),
+    tags=["powerbi", "bifarma", "sync"],
     start_date=datetime(2026, 1, 1),
     catchup=False,
 )

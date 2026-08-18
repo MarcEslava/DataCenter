@@ -63,6 +63,7 @@ def _query_sql(conn_id: str, sql: str, dialect: str):
 
 @dag(
     dag_id='ecofams_ETL',
+    tags=["ecofams", "ecoextract", "ftp"],
     description='Per-pharmacy article .txt export to ecofams FTP',
     schedule=Variable.get("ecofams_etl_schedule", default_var="0 3 1 * *"),
     start_date=datetime(2024, 1, 1),
