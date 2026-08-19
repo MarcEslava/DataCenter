@@ -5,6 +5,11 @@ Per-pharmacy incremental sync  ecoextract (Farmatic mirror, Spanish)  →  ecobu
 See docs/ecoBuy_talend_mapping.md for the full source→target mapping this file implements.
 
 Flow (per unit from `SELECT id, id_ecobuy FROM Unit WHERE ecobuy <> 0`):
+  Phase 0 (extraction)   : SSH to the ecoextract server and run `ecoextract_batch.sh {unit} {id_ecobuy}`
+                           per pharmacy, refreshing the source tables. This is what the Talend job
+                           `ecoBuy_Act_ecoExtract` did (it died on 2026-07-17 with idecobuy=""),
+                           the same batch `actualizar_ecoextract` runs for the non-ecobuy pharmacies.
+                           Without it the mapping below reads stale data and imports nothing new.
   Phase 1 (master)       : providers, superfamilies, families, laboratories, iva, iva_groups (+ defaults)
   Phase 2 (transactions) : products, orders, purchases + details, receptions + details,
                            product_lists + products   (incremental on `_updated >= Fecha_Desde`)
@@ -30,6 +35,11 @@ from airflow.models import Variable
 
 SRC_CONN_ID = "ecoextract_db"     # Farmatic mirror (Spanish tables) — read
 DST_CONN_ID = "ecobuy_db"         # normalized ecobuy — read + write
+SSH_CONN_ID = "ecoextract_ssh"    # ecoextract server — runs the per-unit extraction batch
+
+# Extraction batch run on the ecoextract server before mapping (same script
+# `actualizar_ecoextract` uses for the non-ecobuy pharmacies).
+EXTRACT_SCRIPT = "/var/www/ecoextract/scripts/ecoextract_batch.sh"
 
 IVA_RATE        = {"01": 0, "02": 4.5, "03": 11.4, "04": 26.2}   # XGrup_IdGrupoIva → iva %
 DEFAULT_CODE    = "99999"          # "SIN ASIGNAR" lab / superfamily code
@@ -123,6 +133,59 @@ def ecobuy_etl():
         units = [{"id_unit": int(r["id"]), "id_ecobuy": int(r["id_ecobuy"])} for _, r in df.iterrows()]
         print(f"{len(units)} ecobuy units")
         return units
+
+    @task
+    def update_ecoextract(units: list[dict]) -> None:
+        """Refresh ecoextract for each ecobuy pharmacy before mapping.
+
+        SSHes to the ecoextract server and runs `ecoextract_batch.sh {idunit} {id_ecobuy}`
+        per unit — the same batch `actualizar_ecoextract` runs for the non-ecobuy
+        pharmacies. This is the step the old Talend job `ecoBuy_Act_ecoExtract` did;
+        without it the source tables stay stale and the incremental mapping below
+        finds nothing new (no error, just no data).
+
+        A unit that fails is logged and skipped — one unreachable pharmacy must not
+        block the mapping of the rest.
+        """
+        import paramiko
+        from airflow.hooks.base import BaseHook
+
+        if not units:
+            print("No units to extract")
+            return
+
+        conn = BaseHook.get_connection(SSH_CONN_ID)
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        connect_kwargs = dict(
+            hostname=conn.host, port=conn.port or 22, username=conn.login,
+        )
+        if conn.password:
+            connect_kwargs["password"] = conn.password
+        key_file = conn.extra_dejson.get("key_file")
+        if key_file:
+            connect_kwargs.update(key_filename=key_file, look_for_keys=False, allow_agent=False)
+
+        client.connect(**connect_kwargs)
+        print(f"SSH connected to {conn.host}")
+        ok, failed = 0, []
+        try:
+            for u in units:
+                idunit, id_ecobuy = u["id_unit"], u["id_ecobuy"]
+                cmd = f"bash {EXTRACT_SCRIPT} {idunit} {id_ecobuy}"
+                _, stdout, stderr = client.exec_command(cmd)
+                exit_code = stdout.channel.recv_exit_status()
+                out = stdout.read().decode().strip()
+                err = stderr.read().decode().strip()
+                if exit_code != 0:
+                    print(f"[unit {idunit}] FAILED (exit {exit_code}): {err or out}")
+                    failed.append(idunit)
+                else:
+                    ok += 1
+                    print(f"[unit {idunit}] OK{f': {out[:200]}' if out else ''}")
+        finally:
+            client.close()
+        print(f"ecoextract refreshed: {ok} OK, {len(failed)} failed{f' → {failed}' if failed else ''}")
 
     @task
     def process_master(unit: dict) -> dict:
@@ -434,10 +497,12 @@ def ecobuy_etl():
         finally:
             t.close()
 
-    # ── Wire: per-unit master → transactions → finalize once ──
-    units  = extract_units()
-    master = process_master.expand(unit=units)
-    tx     = process_transactions.expand(unit=master)
+    # ── Wire: refresh ecoextract → per-unit master → transactions → finalize once ──
+    units     = extract_units()
+    extracted = update_ecoextract(units)      # must finish before mapping stale data
+    master    = process_master.expand(unit=units)
+    extracted >> master
+    tx        = process_transactions.expand(unit=master)
     finalize(tx)
 
 
