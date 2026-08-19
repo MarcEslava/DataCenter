@@ -19,6 +19,7 @@ dag = DAG(
     default_args=default_args,
     description='Run ecoextract_batch.sh for each unit via SSH',
     schedule=Variable.get("ecoextract_schedule", default_var="0 5 * * *"),
+    tags=["ecoextract", "ssh", "ingest"],
     start_date=datetime(2026, 1, 1),
     catchup=False,
 )

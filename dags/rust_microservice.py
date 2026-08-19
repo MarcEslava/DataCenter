@@ -9,6 +9,7 @@ import uuid
 
 with DAG(
     dag_id="rust_microservice",
+    tags=["experimental", "microservice"],
     start_date=datetime(2025, 1, 1),
     schedule=None,
     catchup=False,

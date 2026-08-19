@@ -56,6 +56,7 @@ dag = DAG(
     default_args=default_args,
     description='EcoVital Orders ETL Pipeline',
     schedule=Variable.get("ecovital_schedule", default_var="30 11 * * *"),
+    tags=["ecovital", "orders", "alloga", "logicommerce"],
     start_date=datetime(2026, 1, 1),
     catchup=False,
 )

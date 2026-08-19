@@ -16,6 +16,7 @@ dag = DAG(
     default_args=default_args,
     description='Debers y Haceres bot execution',
     schedule=Variable.get("botaqua_debers_schedule", default_var="0 7 * * *"),
+    tags=["aqua", "bot", "rpa"],
     start_date=datetime(2026, 1, 1),
     catchup=False,
 )

@@ -103,6 +103,7 @@ def _to_records(df):
 
 @dag(
     dag_id="ecobuy_ETL",
+    tags=["ecobuy", "ecoextract", "sync"],
     description="Incremental ecoextract → ecobuy per pharmacy (exact Talend port)",
     schedule=Variable.get("ecobuy_schedule", default_var="0 2 * * *"),  # nightly 02:00
     start_date=datetime(2024, 1, 1),

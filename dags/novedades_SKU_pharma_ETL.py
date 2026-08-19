@@ -72,6 +72,7 @@ def _safe(name: str) -> str:
 
 @dag(
     dag_id='novedades_SKU_pharma_ETL',
+    tags=["novedades", "zoho", "sku"],
     description='ETL for Pharma SKU updates from Zoho per client',
     schedule=Variable.get("novedades_sku_pharma_schedule", default_var="0 2 1 * *"),  # default: 2am on 1st of each month
     start_date=datetime(2024, 1, 1),

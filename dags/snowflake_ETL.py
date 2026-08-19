@@ -277,6 +277,7 @@ def _stream_incremental(query: str, conn_id: str, dialect: str, table: str,
 
 @dag(
     dag_id='snowflake_ETL',
+    tags=["snowflake", "warehouse", "analytics"],
     description='Incremental load BifarmaCentral DW → Snowflake DEV (one task per entity)',
     schedule=Variable.get("snowflake_etl_schedule", default_var="0 4 * * *"),
     start_date=datetime(2024, 1, 1),

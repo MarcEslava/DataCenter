@@ -89,6 +89,38 @@ docker compose logs -f       # logs
 docker compose ps            # status
 ```
 
+## Troubleshooting
+
+### Fewer DAGs than expected / DAGs not updating after a deploy
+
+The deploy does `docker compose up -d` **without** `--force-recreate`. If a service's
+definition didn't change, its container is **not** recreated (`docker compose ps` shows
+`Running`, not `Recreated`), so the `dag-processor` keeps serving a **stale, cached DAG set**
+— new `.py` files on disk are ignored, with **no import error** shown. Fix on the affected host:
+
+```bash
+docker compose exec scheduler airflow dags reserialize        # force a re-parse
+docker compose exec scheduler airflow dags list | wc -l       # verify the count
+# if still stale, recreate the Airflow services (also re-installs pip deps, rebuilds image):
+docker compose up -d --build --force-recreate apiserver scheduler dag-processor
+```
+
+To avoid it recurring, have the deploy script use `--force-recreate` (or recreate on commit
+change). Confirm nothing is genuinely broken with `airflow dags list-import-errors` (empty = OK).
+
+### `"BASTION_HOST" / "*_REMOTE_HOST" variable is not set. Defaulting to a blank string.`
+
+**Expected in production — ignore.** These feed only the dev-only `db-tunnel` container, which
+is not started in prod (see [SSH DB tunnel](#local-dev-only-ssh-db-tunnel)). They do not affect
+DAG parsing.
+
+### `Could not read served logs ... http://:8793 ... No host supplied`
+
+The task instance's `hostname` is empty, so the live-log URL is malformed. Usually means the
+container is stale (see above) — `--force-recreate` the Airflow services. Persisted logs are
+always on disk under `logs/` regardless, e.g.
+`logs/dag_id=<id>/run_id=<run>/task_id=<task>/attempt=<n>.log`.
+
 ## Project Structure
 
 ```
