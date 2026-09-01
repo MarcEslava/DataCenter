@@ -245,7 +245,7 @@ def ecolabs_etl():
     @task
     def build_lab_books(products_file: str, vendor_info: dict, bifarma_cn_file: str) -> list[dict]:
         """Normalise, then upload one ECO_{LAB}_B{n}.csv per book × lab (FTP). Returns a summary."""
-        import os, json, contextlib
+        import os, json, re, contextlib
         import pandas as pd
         from airflow.hooks.base import BaseHook
         from utils.ftp import FTPConn
@@ -422,7 +422,11 @@ def ecolabs_etl():
                         continue
                     g = grp[OUT_COLUMNS]
                     if is_efg:
-                        fname = f"{FILE_PREFIX}_B{n}_{safe_lab}_EFG.csv"   # ECO_B1_CINFA_EFG.csv
+                        # Some vendors already carry "EFG" in their Zoho Shortname (e.g.
+                        # "CINFA EFG"); strip it so the suffix is not doubled and the file
+                        # keeps its expected name (ECO_B1_CINFA_EFG.csv, not ..._EFG_EFG.csv).
+                        lab_base = re.sub(r"_?EFG$", "", safe_lab).strip("_") or safe_lab
+                        fname = f"{FILE_PREFIX}_B{n}_{lab_base}_EFG.csv"   # ECO_B1_CINFA_EFG.csv
                     else:
                         fname = f"{FILE_PREFIX}_{safe_lab}_B{n}.csv"       # ECO_ZAMBON_B1.csv
                     # semicolon-separated, comma decimals, no header, ISO-8859-1 — matching the legacy files.
