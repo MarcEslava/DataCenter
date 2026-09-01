@@ -25,6 +25,19 @@ ECOEXTRACT_CONN_ID = "ecoextract_db"     # ecoextract mysql (Articu, Fam_SubFam_
 BIFARMA_C_CONN_ID  = "bifarmaCentral_db" # mssql — BifarmaCentral (canonical product family)
 SSH_CONN_ID        = "ecoextract_ssh"    # bastion for the ingestion batch script
 
+# Product-code synonyms (WEB-1329). Some pharmacies hold an article under a code that
+# is not the one BifarmaCentral uses (an EAN-13, or an alternative CN), so the direct
+# codProducto match misses them and they fall back to the local family. dbo.tbi_sinonimos
+# links equivalent codes (idproducto ↔ idsinonimo); we use it to match by CN *or* EAN.
+# Codes are matched globally (identidad/iddelegacion ignored) against whatever code the
+# pharmacy has. 999996-999999 are generic "no real CN" buckets.
+# ⚠️ tbi_sinonimos lives in the **Bifarma** catalog, NOT in BifarmaCentral. The connection
+# used for this query (BIFARMA_C_CONN_ID) defaults to BifarmaCentral, so the table MUST stay
+# fully qualified as `Bifarma.dbo.tbi_sinonimos` — dropping the prefix breaks it with
+# "Invalid object name" (both catalogs live on the same server, so the cross-DB read works).
+BIFARMA_SIN_DB   = "Bifarma"             # catalog hosting tbi_sinonimos — keep it qualified
+SIN_EXCLUDED_CNS = ("999996", "999997", "999998", "999999")
+
 # TEST MODE: write the per-pharmacy .txt files to LOCAL_TXT_DIR for inspection and
 # skip the FTP upload. Set ENABLE_FTP_UPLOAD = True to push to the FTP server instead.
 ENABLE_FTP_UPLOAD = True
@@ -57,6 +70,20 @@ def _query_sql(conn_id: str, sql: str, dialect: str):
         df.loc[df[col] == "NaT", col] = None
     return df
 
+def _code_variants(code: str) -> set:
+    """A product code and its equivalent spellings, so padding never breaks a match.
+    '000045' and '45' are the same CN; '8029408184572' has no variant."""
+    c = str(code).strip()
+    if not c:
+        return set()
+    out = {c}
+    stripped = c.lstrip("0")
+    if stripped:
+        out.add(stripped)
+        if len(stripped) <= 6:
+            out.add(stripped.zfill(6))
+    return out
+
 # ─────────────────────────────────────────────────────────────
 # DAG
 # ─────────────────────────────────────────────────────────────
@@ -68,6 +95,13 @@ def _query_sql(conn_id: str, sql: str, dialect: str):
     schedule=Variable.get("ecofams_etl_schedule", default_var="0 3 1 * *"),
     start_date=datetime(2024, 1, 1),
     catchup=False,
+    params={
+        # Production defaults: every ecoFams pharmacy, uploaded to the FTP.
+        # For a single-pharmacy test, set only_unit (e.g. "10066") and upload_ftp=False
+        # when triggering — that writes just that one .txt to LOCAL_TXT_DIR.
+        "only_unit": "",                     # "" = all ecoFams units
+        "upload_ftp": ENABLE_FTP_UPLOAD,     # False = write to LOCAL_TXT_DIR instead of the FTP
+    },
     default_args={
         'owner': 'data-team',
         'retries': 1,
@@ -77,13 +111,15 @@ def _query_sql(conn_id: str, sql: str, dialect: str):
 def ecofams_etl():
 
     @task
-    def extract() -> list[dict]:
-        df = _query_sql(ECOEXTRACT_CONN_ID, """
+    def extract(**context) -> list[dict]:
+        only = str(context["params"].get("only_unit") or "").strip()
+        where = f" AND id = {int(only)}" if only else ""
+        df = _query_sql(ECOEXTRACT_CONN_ID, f"""
             SELECT id AS idunit, description
             FROM Unit
-            WHERE ecoFams = 1
+            WHERE ecoFams = 1{where}
         """, dialect="mysql")
-        print(f"Extracted {len(df)} farmacias")
+        print(f"Extracted {len(df)} farmacias" + (f" (only_unit={only})" if only else ""))
         return df.to_dict("records")
 
     @task
@@ -124,7 +160,7 @@ def ecofams_etl():
             client.close()
 
     @task
-    def process_per_pharmacy(farmacias: list[dict]) -> None:
+    def process_per_pharmacy(farmacias: list[dict], **context) -> None:
         """
         Build and ship the per-pharmacy .txt. The only deliverable is the file
         ({unit}.txt) sent to ecofams via FTP, which the pharmacy DB then ingests.
@@ -141,6 +177,10 @@ def ecofams_etl():
         if not farmacias:
             print("No farmacias to process")
             return
+
+        upload_ftp = bool(context["params"].get("upload_ftp", ENABLE_FTP_UPLOAD))
+        if not upload_ftp:
+            print(f"upload_ftp=False → writing .txt to {LOCAL_TXT_DIR} instead of the FTP")
 
         # FTP target
         ftp_cfg = _query_sql(ECOFAMS_CONN_ID,
@@ -168,6 +208,43 @@ def ecofams_etl():
                      .rename(columns={'FAMILIA': 'FAM_BIF', 'SUPERFAMILIA': 'SUP_BIF'})
                      .drop_duplicates(subset=['cnkey']))
         print(f"Bifarma family map: {len(bifmap)} cn entries")
+
+        # ── WEB-1329: widen the map through tbi_sinonimos (match by CN *or* EAN) ──
+        # Equivalent codes are grouped by idproducto; if ANY code of a group has a
+        # canonical family, every other code in the group inherits it. This catches the
+        # articles a pharmacy holds under an EAN-13 or an alternative CN, which the plain
+        # codProducto match missed (they silently fell back to the local family).
+        sin = _query_sql(BIFARMA_C_CONN_ID, f"""
+            SELECT DISTINCT idproducto, idsinonimo
+            FROM {BIFARMA_SIN_DB}.dbo.tbi_sinonimos   -- Bifarma catalog, not BifarmaCentral
+            WHERE idproducto IS NOT NULL AND idsinonimo IS NOT NULL
+              AND idproducto NOT IN {SIN_EXCLUDED_CNS}
+        """, dialect="mssql")
+
+        fam = {k: (f, s) for k, f, s in zip(bifmap['cnkey'], bifmap['FAM_BIF'], bifmap['SUP_BIF'])}
+        for k in list(fam):                      # '000045' also reachable as '45'
+            for v in _code_variants(k):
+                fam.setdefault(v, fam[k])
+        # group: idproducto → every equivalent code (itself + its synonyms, with variants)
+        groups: dict = {}
+        for p, sy in zip(sin['idproducto'].astype(str), sin['idsinonimo'].astype(str)):
+            groups.setdefault(p.strip(), set()).update(_code_variants(p) | _code_variants(sy))
+
+        added = 0
+        for codes in groups.values():
+            hit = next((fam[c] for c in codes if c in fam), None)
+            if not hit:
+                continue
+            for c in codes:
+                if c not in fam:
+                    fam[c] = hit
+                    added += 1
+        if added:
+            bifmap = pd.DataFrame(
+                [{'cnkey': k, 'FAM_BIF': v[0], 'SUP_BIF': v[1]} for k, v in fam.items()]
+            )
+        print(f"Synonyms: {len(sin)} pairs, {len(groups)} groups → +{added} extra cn entries "
+              f"({len(bifmap)} total)")
 
         for f in farmacias:
             unit = f["idunit"] # test with 10044 -- f["idunit"]
@@ -207,7 +284,7 @@ def ecofams_etl():
             lines   = clean.apply('\t'.join, axis=1)
             content = ('\r\n'.join(lines) + '\r\n').encode('latin-1', errors='replace')
 
-            if ENABLE_FTP_UPLOAD:
+            if upload_ftp:
                 remote = f"{ftp_folder}/{unit}.txt"
                 with FTPConn(
                     host=str(ftp_cfg["server_ftp"]), user=str(ftp_cfg["user_ftp"]),
