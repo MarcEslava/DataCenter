@@ -40,7 +40,9 @@ deploy_dags_only() {
 # ── Full stack deploy ─────────────────────────────────────────
 deploy_full_stack() {
     PROFILE=""
-    [[ "$MODE" == "--dev" ]] && PROFILE="--profile dev"
+    # "heavy" holds the Kafka/Spark images: local dev wants them, the prod deploy
+    # must never pull them (see docker-compose.yaml).
+    [[ "$MODE" == "--dev" ]] && PROFILE="--profile dev --profile heavy"
 
     [[ ! -f ".env" ]] && { err ".env file not found. Copy env_example.txt to .env"; exit 1; }
     set -a; source .env; set +a
