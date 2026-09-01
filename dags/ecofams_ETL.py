@@ -95,13 +95,6 @@ def _code_variants(code: str) -> set:
     schedule=Variable.get("ecofams_etl_schedule", default_var="0 3 1 * *"),
     start_date=datetime(2024, 1, 1),
     catchup=False,
-    params={
-        # Production defaults: every ecoFams pharmacy, uploaded to the FTP.
-        # For a single-pharmacy test, set only_unit (e.g. "10066") and upload_ftp=False
-        # when triggering — that writes just that one .txt to LOCAL_TXT_DIR.
-        "only_unit": "",                     # "" = all ecoFams units
-        "upload_ftp": ENABLE_FTP_UPLOAD,     # False = write to LOCAL_TXT_DIR instead of the FTP
-    },
     default_args={
         'owner': 'data-team',
         'retries': 1,
@@ -111,15 +104,13 @@ def _code_variants(code: str) -> set:
 def ecofams_etl():
 
     @task
-    def extract(**context) -> list[dict]:
-        only = str(context["params"].get("only_unit") or "").strip()
-        where = f" AND id = {int(only)}" if only else ""
-        df = _query_sql(ECOEXTRACT_CONN_ID, f"""
+    def extract() -> list[dict]:
+        df = _query_sql(ECOEXTRACT_CONN_ID, """
             SELECT id AS idunit, description
             FROM Unit
-            WHERE ecoFams = 1{where}
+            WHERE ecoFams = 1
         """, dialect="mysql")
-        print(f"Extracted {len(df)} farmacias" + (f" (only_unit={only})" if only else ""))
+        print(f"Extracted {len(df)} farmacias")
         return df.to_dict("records")
 
     @task
@@ -160,7 +151,7 @@ def ecofams_etl():
             client.close()
 
     @task
-    def process_per_pharmacy(farmacias: list[dict], **context) -> None:
+    def process_per_pharmacy(farmacias: list[dict]) -> None:
         """
         Build and ship the per-pharmacy .txt. The only deliverable is the file
         ({unit}.txt) sent to ecofams via FTP, which the pharmacy DB then ingests.
@@ -177,10 +168,6 @@ def ecofams_etl():
         if not farmacias:
             print("No farmacias to process")
             return
-
-        upload_ftp = bool(context["params"].get("upload_ftp", ENABLE_FTP_UPLOAD))
-        if not upload_ftp:
-            print(f"upload_ftp=False → writing .txt to {LOCAL_TXT_DIR} instead of the FTP")
 
         # FTP target
         ftp_cfg = _query_sql(ECOFAMS_CONN_ID,
@@ -284,7 +271,7 @@ def ecofams_etl():
             lines   = clean.apply('\t'.join, axis=1)
             content = ('\r\n'.join(lines) + '\r\n').encode('latin-1', errors='replace')
 
-            if upload_ftp:
+            if ENABLE_FTP_UPLOAD:
                 remote = f"{ftp_folder}/{unit}.txt"
                 with FTPConn(
                     host=str(ftp_cfg["server_ftp"]), user=str(ftp_cfg["user_ftp"]),
