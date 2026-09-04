@@ -5,11 +5,12 @@ import time
 import pandas as pd
 
 
-CLIENT_ID = "1000.TB4P58146F209UUX572QQK5DGD2G6V"
-CLIENT_SECRET = "813e36e342c089dbc89cf14b42e1f1e61c50df47d6"
-REDIRECT_URL = "https://www.ecoceutics.com/wp-json/bitgfzc/redirect"
-REFRESH_ID = "1000.a969c1c21564d6fdf99ddb1ea08fd395.ef9c552deb5ab38ce55d45224117493e"
-AUTHORITATION_CODE = '1000.7a95ae9d24d67431d979138cf32694da.c2f272295627bd21cf4aad6a92b4f785'
+# Credencials Zoho: surten de l'entorn, MAI hardcodejades al codi.
+CLIENT_ID = os.environ.get("ZOHO_CLIENT_ID", "")
+CLIENT_SECRET = os.environ.get("ZOHO_CLIENT_SECRET", "")
+REDIRECT_URL = os.environ.get("ZOHO_REDIRECT_URL", "https://www.ecoceutics.com/wp-json/bitgfzc/redirect")
+REFRESH_ID = os.environ.get("ZOHO_REFRESH_TOKEN", "")
+AUTHORITATION_CODE = os.environ.get("ZOHO_AUTH_CODE", "")
 
 def extract_vendors() -> list[dict]:
     """Extract vendors from Zoho and return one dict per client group."""
